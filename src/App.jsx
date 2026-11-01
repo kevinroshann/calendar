@@ -17,13 +17,28 @@ const monthGrid = (y, m) => { const s = startOfWeek(new Date(y, m, 1)); return A
 const fmtTime = (t) => { const [h, m] = t.split(":").map(Number); return `${h % 12 || 12}${m ? ":" + pad(m) : ""} ${h < 12 ? "AM" : "PM"}`; };
 const mins = (t) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
 
-const CALS = [
+const DEFAULT_CALS = [
   { id: "my", name: "My calendar", color: "#6366f1" },
   { id: "work", name: "Work", color: "#10b981" },
   { id: "family", name: "Family", color: "#f43f5e" },
   { id: "birthdays", name: "Birthdays", color: "#f59e0b" },
 ];
-const color = (id) => CALS.find((c) => c.id === id)?.color || "#6366f1";
+const normalizeCalendars = (saved = []) => {
+  const ids = new Set(DEFAULT_CALS.map((calendar) => calendar.id));
+  const custom = Array.isArray(saved) ? saved.flatMap((calendar) => {
+    if (!calendar || typeof calendar.id !== "string" || ids.has(calendar.id)) return [];
+    const name = typeof calendar.name === "string" ? calendar.name.trim() : "";
+    if (!name) return [];
+    ids.add(calendar.id);
+    return [{
+      id: calendar.id,
+      name,
+      color: typeof calendar.color === "string" && /^#[\da-f]{6}$/i.test(calendar.color) ? calendar.color : "#6366f1",
+      custom: true,
+    }];
+  }) : [];
+  return [...DEFAULT_CALS, ...custom];
+};
 const LEVELS = [["day", "Day"], ["month", "Month"], ["year", "Year"], ["decade", "Decade"]];
 const goalKey = (level, d) =>
   level === "day" ? dk(d) : level === "month" ? dk(d).slice(0, 7) : level === "year" ? String(d.getFullYear()) : String(decadeOf(d.getFullYear()));
@@ -44,13 +59,16 @@ const DEMO_RECORDS = {
   goals: [[1, "Finish the report"], [2, "Read 2 books"], [3, "Run a half marathon"], [4, "Buy a house"]],
   items: [[1, "College semester"], [2, "Renew passport"], [3, "Learn guitar"], [4, "Summer trip"]],
 };
-const removeDemoRecords = (data) => Object.fromEntries(
-  ["events", "goals", "items", "challenges"].map((kind) => [
-    kind,
-    (Array.isArray(data[kind]) ? data[kind] : []).filter((item) =>
-      !DEMO_RECORDS[kind]?.some(([id, title]) => item.id === id && item.title === title)),
-  ]),
-);
+const removeDemoRecords = (data) => ({
+  ...data,
+  ...Object.fromEntries(
+    ["events", "goals", "items", "challenges"].map((kind) => [
+      kind,
+      (Array.isArray(data[kind]) ? data[kind] : []).filter((item) =>
+        !DEMO_RECORDS[kind]?.some(([id, title]) => item.id === id && item.title === title)),
+    ]),
+  ),
+});
 /* challenges: {id,title,start,days,note,checks:[YYYY-MM-DD]} */
 const cEnd = (c) => dk(addDays(parse(c.start), c.days - 1));
 const cActive = (c, k) => c.start <= k && k <= cEnd(c);
@@ -234,6 +252,7 @@ function CalendarApp({ user, onSignOut, authError }) {
   const [view, setView] = useState("month");
   const [cur, setCur] = useState(today);
   const [events, setEvents] = useState(() => load("events", []));
+  const [calendars, setCalendars] = useState(() => normalizeCalendars(load("calendars", [])));
   const [goals, setGoals] = useState(() => load("goals", []));
   const [items, setItems] = useState(() => load("items", []));
   const [challenges, setChallenges] = useState(() => load("challenges", []));
@@ -288,12 +307,14 @@ function CalendarApp({ user, onSignOut, authError }) {
         goals: load("goals", []),
         items: load("items", []),
         challenges: load("challenges", []),
+        calendars: normalizeCalendars(load("calendars", [])),
       });
       const calendar = removeDemoRecords({
         events: Array.isArray(stored?.events) ? stored.events : localCalendar.events,
         goals: Array.isArray(stored?.goals) ? stored.goals : localCalendar.goals,
         items: Array.isArray(stored?.items) ? stored.items : localCalendar.items,
         challenges: Array.isArray(stored?.challenges) ? stored.challenges : localCalendar.challenges,
+        calendars: normalizeCalendars(stored?.calendars ?? localCalendar.calendars),
       });
       const demoRecordsRemoved = ["events", "goals", "items"].some((kind) =>
         (Array.isArray(stored?.[kind]) ? stored[kind].length : 0) > calendar[kind].length);
@@ -307,6 +328,7 @@ function CalendarApp({ user, onSignOut, authError }) {
 
       if (!active) return;
       setEvents(calendar.events);
+      setCalendars(calendar.calendars);
       setGoals(calendar.goals);
       setItems(calendar.items);
       setChallenges(calendar.challenges);
@@ -329,7 +351,7 @@ function CalendarApp({ user, onSignOut, authError }) {
         .from("calendar_data")
         .upsert({
           user_id: user.id,
-          data: { events, goals, items, challenges },
+          data: { events, calendars, goals, items, challenges },
           updated_at: new Date().toISOString(),
         });
       if (!active) return;
@@ -346,7 +368,7 @@ function CalendarApp({ user, onSignOut, authError }) {
       active = false;
       clearTimeout(timer);
     };
-  }, [cloudReady, user.id, events, goals, items, challenges, syncRetry]);
+  }, [cloudReady, user.id, events, calendars, goals, items, challenges, syncRetry]);
   useEffect(() => {
     const h = (e) => {
       const typing = /INPUT|TEXTAREA|SELECT/.test(e.target.tagName);
@@ -398,6 +420,7 @@ function CalendarApp({ user, onSignOut, authError }) {
     return `${MONTHS[cur.getMonth()]} ${y}`;
   })();
 
+  const calendarColor = (id) => calendars.find((calendar) => calendar.id === id)?.color || "#6366f1";
   const visible = events.filter((e) => !hidden[e.cal]);
   const eventsOn = (d) => visible.filter((e) => e.date === dk(d)).sort((a, b) => a.start.localeCompare(b.start));
   const newEvent = (d, start = "09:00", allDay = false, endAt) => {
@@ -433,6 +456,16 @@ function CalendarApp({ user, onSignOut, authError }) {
   const tlItems = [...items, ...challenges.map((c) => ({ id: "c" + c.id, ch: c, kind: "challenge", title: c.title, start: c.start, end: cEnd(c), done: cStats(c).complete }))];
 
   const saveEvent = (e) => setEvents((p) => (e.id ? p.map((x) => (x.id === e.id ? e : x)) : [...p, { ...e, id: Date.now() }]));
+  const saveCalendar = (calendar) => setCalendars((previous) => normalizeCalendars([
+    ...previous.filter((item) => item.id !== calendar.id),
+    { ...calendar, id: calendar.id || `custom-${Date.now()}`, custom: true },
+  ]));
+  const deleteCalendar = (id) => {
+    if (!window.confirm("Delete this calendar? Its events will be moved to My calendar.")) return;
+    setEvents((previous) => previous.map((event) => event.cal === id ? { ...event, cal: "my" } : event));
+    setCalendars((previous) => previous.filter((calendar) => calendar.id !== id));
+    setModal(null);
+  };
   const saveGoal = (g) => {
     const out = { id: g.id || Date.now(), title: g.title, level: g.level, key: goalKey(g.level, parse(g.date)), done: g.done };
     setGoals((p) => (g.id ? p.map((x) => (x.id === g.id ? out : x)) : [...p, out]));
@@ -447,13 +480,24 @@ function CalendarApp({ user, onSignOut, authError }) {
   const dstart = decadeOf(cur.getFullYear());
   const yr = view === "custom" ? range : [dstart, dstart + (view === "twenty" ? 19 : 9)];
   const carry = () => setGoals((p) => p.map((g) => (g.level === "day" && !g.done && g.key < dk(today) ? { ...g, key: dk(today) } : g)));
-  const ctx = { carry, range, setRange, cur, setCur, eventsOn, goalsFor, newEvent, newGoal, go, setModal, editGoal, toggleGoal, goals, items, openRange, toggleItem, events: visible, challenges, chOn, toggleCheck, openChallenge, newChallenge, fcId: focusCh, openGoals };
+  const ctx = { carry, range, setRange, cur, setCur, eventsOn, goalsFor, newEvent, newGoal, go, setModal, editGoal, toggleGoal, goals, items, openRange, toggleItem, events: visible, challenges, chOn, toggleCheck, openChallenge, newChallenge, fcId: focusCh, openGoals, calendarColor };
 
   const fileRef = useRef(null);
-  const exportData = () => { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify({ events, goals, items, challenges }, null, 2)], { type: "application/json" })); a.download = "calendar-backup.json"; a.click(); };
+  const exportData = () => { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify({ events, calendars, goals, items, challenges }, null, 2)], { type: "application/json" })); a.download = "calendar-backup.json"; a.click(); };
   const importFile = (e) => {
     const fl = e.target.files[0];
-    if (fl) fl.text().then((t) => { try { const d = JSON.parse(t); d.events && setEvents(d.events); d.goals && setGoals(d.goals); d.items && setItems(d.items); d.challenges && setChallenges(d.challenges); } catch { alert("That file isn’t a valid backup."); } });
+    if (fl) fl.text().then((t) => {
+      try {
+        const d = JSON.parse(t);
+        if (d.events) setEvents(d.events);
+        if (d.calendars) setCalendars(normalizeCalendars(d.calendars));
+        if (d.goals) setGoals(d.goals);
+        if (d.items) setItems(d.items);
+        if (d.challenges) setChallenges(d.challenges);
+      } catch {
+        alert("That file isn’t a valid backup.");
+      }
+    });
     e.target.value = "";
   };
   const ym = special ? null : title.match(/^(.*?)(\s\d{4})$/);
@@ -544,12 +588,18 @@ function CalendarApp({ user, onSignOut, authError }) {
             <MiniMonth cur={cur} setCur={(d) => { setFocusCh(null); setPage("cal"); setCur(d); if (view === "year" || view === "decade" || view === "twenty") setView("day"); }} eventsOn={eventsOn} />
             <TodayCard {...ctx} />
             <div className="cals">
-              <h3>My calendars</h3>
-              {CALS.map((c) => (
-                <label key={c.id}>
-                  <input type="checkbox" checked={!hidden[c.id]} onChange={() => setHidden({ ...hidden, [c.id]: !hidden[c.id] })} style={{ "--cc": c.color }} />
-                  {c.name}
-                </label>
+              <div className="cal-head">
+                <h3>My calendars</h3>
+                <button className="ib sm" onClick={() => setModal({ type: "calendar", data: { name: "", color: "#8e5cf7" } })} aria-label="Add calendar" title="Add calendar"><Ic n="plus" s={15} /></button>
+              </div>
+              {calendars.map((c) => (
+                <div key={c.id} className="cal-row">
+                  <label>
+                    <input type="checkbox" checked={!hidden[c.id]} onChange={() => setHidden({ ...hidden, [c.id]: !hidden[c.id] })} style={{ "--cc": c.color }} />
+                    {c.name}
+                  </label>
+                  {c.custom && <button className="ib sm cal-edit" onClick={() => setModal({ type: "calendar", data: c })} aria-label={`Edit ${c.name}`} title={`Edit ${c.name}`}><Ic n="sliders" s={14} /></button>}
+                </div>
               ))}
             </div>
           </aside>
@@ -579,7 +629,8 @@ function CalendarApp({ user, onSignOut, authError }) {
             : <span className="agechip">{VIEWS.find((v) => v[0] === view)[1]}</span>}
         </div>
       )}
-      {modal?.type === "event" && <EventModal data={modal.data} close={() => setModal(null)} save={saveEvent} del={(id) => remove("event", id)} />}
+      {modal?.type === "event" && <EventModal data={modal.data} calendars={calendars} calendarColor={calendarColor} close={() => setModal(null)} save={saveEvent} del={(id) => remove("event", id)} />}
+      {modal?.type === "calendar" && <CalendarModal data={modal.data} close={() => setModal(null)} save={saveCalendar} del={deleteCalendar} />}
       {toast && <div className="toast"><span>{toast.msg}</span>{toast.undo && <button onClick={() => { toast.undo(); setToast(null); }}>Undo</button>}</div>}
       {pal && <Palette close={() => setPal(false)} go={go} setView={showView} setCur={(d) => { setFocusCh(null); setPage("cal"); setCur(d); }} openGoals={openGoals} openChallenge={openChallenge} events={events} goals={goals} items={items} challenges={challenges} newChallenge={() => newChallenge()} setAccent={setAccent} exportData={exportData} importClick={() => fileRef.current?.click()} toggleDark={() => setDark(!dark)} addEvent={(ev) => setEvents((p) => [...p, { ...ev, id: Date.now() }])} />}
       {help && (
@@ -616,8 +667,8 @@ function MiniMonth({ cur, setCur }) {
 }
 
 /* ---------- chips ---------- */
-const Chip = ({ e, setModal }) => (
-  <div className={"chip" + (e.allDay ? " ad" : "")} style={{ "--c": color(e.cal) }} onClick={(ev) => { ev.stopPropagation(); setModal({ type: "event", data: e }); }}>
+const Chip = ({ e, setModal, calendarColor }) => (
+  <div className={"chip" + (e.allDay ? " ad" : "")} style={{ "--c": calendarColor(e.cal) }} onClick={(ev) => { ev.stopPropagation(); setModal({ type: "event", data: e }); }}>
     {!e.allDay && <i />}
     {!e.allDay && <small>{fmtTime(e.start)}</small>}
     <span>{e.title}</span>
@@ -746,7 +797,7 @@ function MonthView(p) {
 }
 
 /* ---------- day / week ---------- */
-function TimeGrid({ days, eventsOn, goalsFor, chOn, toggleCheck, openChallenge, newEvent, newGoal, setModal, editGoal, toggleGoal, go }) {
+function TimeGrid({ days, eventsOn, goalsFor, chOn, toggleCheck, openChallenge, newEvent, newGoal, setModal, editGoal, toggleGoal, go, calendarColor }) {
   const [now, setNow] = useState(new Date());
   const sc = useRef(null);
   const [sbw, setSbw] = useState(0), [pop, setPop] = useState(null);
@@ -786,7 +837,7 @@ function TimeGrid({ days, eventsOn, goalsFor, chOn, toggleCheck, openChallenge, 
         <div className="tz">All day</div>
         {days.map((d) => (
           <div key={dk(d)} onClick={() => newEvent(d, "09:00", true)}>
-            {eventsOn(d).filter((e) => e.allDay).map((e) => <Chip key={e.id} e={e} setModal={setModal} />)}
+            {eventsOn(d).filter((e) => e.allDay).map((e) => <Chip key={e.id} e={e} setModal={setModal} calendarColor={calendarColor} />)}
           </div>
         ))}
       </div>
@@ -845,7 +896,7 @@ function TimeGrid({ days, eventsOn, goalsFor, chOn, toggleCheck, openChallenge, 
               {eventsOn(d).filter((e) => !e.allDay).map((e) => {
                 const top = (mins(e.start) / 60) * 48, h = Math.max(20, ((mins(e.end) - mins(e.start)) / 60) * 48);
                 return (
-                  <div key={e.id} className="ev" onMouseDown={(ev) => ev.stopPropagation()} style={{ top, height: h - 2, "--c": color(e.cal) }} onClick={(ev) => { ev.stopPropagation(); setModal({ type: "event", data: e }); }}>
+                  <div key={e.id} className="ev" onMouseDown={(ev) => ev.stopPropagation()} style={{ top, height: h - 2, "--c": calendarColor(e.cal) }} onClick={(ev) => { ev.stopPropagation(); setModal({ type: "event", data: e }); }}>
                     <b>{e.title}</b><br /><small>{fmtTime(e.start)} – {fmtTime(e.end)}</small>
                   </div>
                 );
@@ -1438,7 +1489,27 @@ function Modal({ title, close, children }) {
   );
 }
 
-function EventModal({ data, close, save, del }) {
+function CalendarModal({ data, close, save, del }) {
+  const [f, setF] = useState(data);
+  const name = f.name.trim();
+  return (
+    <Modal title={f.id ? "Edit calendar" : "New calendar"} close={close}>
+      <input className="ti" autoFocus placeholder="Calendar name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
+      <label className="cal-form-color">
+        <span>Calendar color</span>
+        <input type="color" value={f.color} onChange={(e) => setF({ ...f, color: e.target.value })} aria-label="Calendar color" />
+      </label>
+      {f.id && <small className="cal-form-help">Deleting this calendar moves its events to My calendar.</small>}
+      <div className="act">
+        {f.id && <button className="btn red" onClick={() => del(f.id)}>Delete</button>}
+        <div className="sp" />
+        <button className="btn fill" disabled={!name} onClick={() => { save({ ...f, name }); close(); }}>Save</button>
+      </div>
+    </Modal>
+  );
+}
+
+function EventModal({ data, calendars, calendarColor, close, save, del }) {
   const [f, setF] = useState(data);
   const set = (k, v) => setF({ ...f, [k]: v });
   return (
@@ -1449,8 +1520,8 @@ function EventModal({ data, close, save, del }) {
       </div>
       <label className="ck"><input type="checkbox" checked={f.allDay} onChange={(e) => set("allDay", e.target.checked)} /> All day</label>
       <div className="fr">
-        <select value={f.cal} onChange={(e) => set("cal", e.target.value)}>{CALS.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
-        <i className="dot" style={{ background: color(f.cal) }} />
+        <select value={f.cal} onChange={(e) => set("cal", e.target.value)}>{calendars.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+        <i className="dot" style={{ background: calendarColor(f.cal) }} />
       </div>
       <textarea placeholder="Add description" value={f.desc} onChange={(e) => set("desc", e.target.value)} />
       <div className="act">
@@ -1628,8 +1699,13 @@ color-scheme:light;
 .md.sel{background:var(--ab2);color:var(--ac2);font-weight:600}
 .md.pick{background:var(--ab2)!important;color:var(--ac3)}
 .md.has::after{content:"";position:absolute;bottom:3px;left:50%;width:3px;height:3px;border-radius:50%;background:var(--ac);transform:translateX(-50%)}.md.today.has::after{background:var(--onac)}
-.cals{margin-top:18px}.cals h3{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);margin:0 0 6px 6px}
-.cals label{display:flex;gap:10px;align-items:center;padding:6px;border-radius:8px;cursor:pointer;font-weight:500}.cals label:hover{background:var(--hover)}
+.cals{margin-top:18px}.cal-head{display:flex;align-items:center;justify-content:space-between;margin:0 2px 6px 0}.cals h3{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);margin:0 0 0 6px}
+.cal-row{display:flex;align-items:center;gap:2px;border-radius:8px}.cal-row:hover{background:var(--hover)}
+.cals label{display:flex;gap:10px;align-items:center;min-width:0;flex:1;padding:6px;border-radius:8px;cursor:pointer;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cal-edit{opacity:.65}.cal-edit:hover{opacity:1}
+.cal-form-color{display:flex;align-items:center;gap:10px;margin:2px 0 12px;font-size:13px;font-weight:500;color:var(--mute)}
+.cal-form-color input{width:38px;height:34px;padding:3px;border-radius:8px;border:1px solid var(--line);background:var(--soft);cursor:pointer}
+.cal-form-help{display:block;color:var(--mute);font-size:12px;margin:0 0 12px}
 .card{border:1px solid var(--line);background:var(--tile);border-radius:14px;padding:14px;margin-top:12px;box-shadow:var(--sh1)}
 .pring{display:flex;gap:12px;align-items:center}.pring svg{width:44px;height:44px;transform:rotate(-90deg);flex-shrink:0}.pring circle{fill:none;stroke-width:4.5}.pring .bg{stroke:var(--track)}.pring .fg{stroke:var(--ac);stroke-linecap:round;transition:stroke-dasharray .4s}
 .tc .hr{height:1px;background:var(--line);margin:12px 0}.tc .hint{font-size:12px}.tc b{font-weight:600}
