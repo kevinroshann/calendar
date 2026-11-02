@@ -1076,7 +1076,7 @@ function YearsView({ cur, view, from, to, range, setRange, go, goals, events, it
                           className={"mc h" + Math.min(4, n) + ((drag.inSel(k) || inPk(k)) ? " pick" : "") + (y === ty && m === today.getMonth() ? " nowm" : "")}
                           onPointerDown={() => drag.down(k)} onPointerEnter={() => drag.over(k)} onDoubleClick={() => go("month", new Date(y, m, 1))}>
                           <span>{MONTHS[m].slice(0, 3)}</span>
-                          {ag >= 0 && <small>{m === 6 && y >= 2006 ? "🎂" : ""}{ag}</small>}
+                          {ag >= 0 && <small>{m === 6 && y >= 2006 ? "Birthday · " : ""}Age {ag}</small>}
                           {n > 0 && <em>{n}</em>}
                         </button>
                       );
@@ -1965,9 +1965,56 @@ box-shadow:0 14px 32px -10px color-mix(in srgb,var(--ac) 55%,transparent),inset 
   .gpcp small{width:28px;font-size:10px}
   .cv{padding:16px 12px 40px}
   .yv{padding:14px 12px 28px}
-  .yr{grid-template-columns:58px minmax(0,1fr);gap:10px;padding:12px 10px}
-  .rail b{font-size:20px}
-  .tl{padding:0 12px 36px}
+  .yvh{gap:9px;margin-bottom:14px}
+  .yvh h2{font-size:28px}
+  .yvh .hint{flex:1 0 100%;font-size:11px;line-height:1.55}
+  .yg{grid-template-columns:minmax(0,1fr);gap:12px}
+  .ym{padding:14px;border-radius:16px}
+  .ym h4{display:flex;align-items:center;min-height:40px;margin:0 0 8px;font-size:15px}
+  .ym .mg{gap:2px}
+  .ym .dow{padding:6px 0;font-size:10px}
+  .ym .md{min-height:36px;margin:0;border-radius:10px;font-size:12px}
+  .ym .md:active,.mc:active,.link:active,.btn:active{transform:scale(.97)}
+  .tl{padding:0 10px 40px}
+  .tlbar{position:relative;height:auto;min-height:56px;padding:8px 0;gap:8px;flex-wrap:wrap}
+  .tlbar>.iseg{max-width:100%;overflow-x:auto;flex:1 1 100%;order:0}
+  .tlbar>.iseg button{min-height:38px;padding-inline:12px}
+  .tlbar>.sp{display:none}
+  .tlbar>.btn{min-height:40px;padding:0 14px;border-radius:12px}
+  .tlbar .od{margin-left:auto}
+  .rng{width:100%;gap:8px}
+  .rng select{min-width:0;flex:1;height:42px;border-radius:12px;padding:0 10px}
+  .rng .link{min-height:38px;padding:0 10px;border-radius:10px;background:var(--ab)}
+  .life{gap:10px;padding:14px;margin:12px 0 8px;border-radius:16px}
+  .life .prog{flex:1;min-width:100px}
+  .life small{font-size:11px;line-height:1.5}
+  .dec{margin-bottom:14px}
+  .dec .dhd{top:0;gap:8px;padding:12px 0 10px}
+  .dhd h2{font-size:22px}
+  .dhd .link{min-height:38px;padding:0 11px;border-radius:10px;background:var(--ab)}
+  .pill{max-width:100%;padding:5px 10px;font-size:11px;line-height:1.4;white-space:normal;overflow-wrap:anywhere}
+  .yr{grid-template-columns:minmax(0,1fr);gap:10px;padding:14px;border-radius:16px}
+  .yr>div:last-child{min-width:0}
+  .rail{display:flex;align-items:baseline;gap:8px}
+  .rail b{font-size:23px}
+  .rail small{font-size:11px}
+  .yt{gap:7px;margin-bottom:10px}
+  .yt .prog.sm{width:68px}
+  .yt .hint{font-size:11px}
+  .yt .link{min-height:36px;padding:0 10px;border-radius:10px;background:var(--ab)}
+  .tag{min-height:28px;padding:4px 8px;font-size:10px;line-height:1.3;white-space:normal;overflow-wrap:anywhere}
+  .ms{grid-template-columns:repeat(4,minmax(0,1fr));gap:7px}
+  .mc{position:relative;align-items:flex-start;justify-content:center;min-height:58px;padding:8px 8px 7px;border-radius:12px;font-size:13px}
+  .mc>span{font-size:13px;font-weight:600;line-height:1.2}
+  .mc small{font-size:10px;line-height:1.25;color:var(--mute);overflow-wrap:anywhere}
+  .mc em{position:absolute;top:5px;right:5px;min-width:17px;padding:0 4px;font-size:9px;line-height:17px}
+  .mc.pick small{color:var(--onac)}
+  .bars{grid-template-columns:repeat(12,minmax(0,1fr));gap:5px 3px;margin-top:10px}
+  .bar{height:30px;min-width:0;gap:5px;padding:0 5px 0 8px;border-radius:8px;font-size:10px}
+  .bar .gk{width:12px;height:12px;flex:0 0 12px}
+  .bar .bt{min-width:0}
+  .selin{max-width:calc(100vw - 24px);flex-wrap:wrap;justify-content:center;padding:9px 10px;border-radius:16px}
+  .selin .btn{min-height:38px;padding:0 12px;border-radius:10px}
   .lw{padding:14px 10px}
   .dock{bottom:calc(10px + env(safe-area-inset-bottom));max-width:calc(100vw - 16px);overflow-x:auto}
   .ov{padding:10px;overflow-y:auto;place-items:center}
