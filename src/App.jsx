@@ -264,6 +264,7 @@ function CalendarApp({ user, onSignOut, authError }) {
   const [hidden, setHidden] = useState({});
   const [modal, setModal] = useState(null); // {type:'event'|'goal', data}
   const [side, setSide] = useState(true);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [panel, setPanel] = useState(true);
   const [menu, setMenu] = useState(false);
   const [dark, setDark] = useState(() => load("dark", !!(typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches)));
@@ -276,6 +277,9 @@ function CalendarApp({ user, onSignOut, authError }) {
   const [toast, setToast] = useState(null);
   const [focusCh, setFocusCh] = useState(null);
   const [page, setPage] = useState("cal"); // "cal" | "goals"
+  const touchStart = useRef(null);
+  const swiping = useRef(false);
+  const [monthDirection, setMonthDirection] = useState(1);
   const fc = focusCh ? challenges.find((c) => c.id === focusCh) : null;
   const special = !!fc || page === "goals";
   const showView = (v) => { setFocusCh(null); setPage("cal"); setView(v); };
@@ -374,13 +378,14 @@ function CalendarApp({ user, onSignOut, authError }) {
       const typing = /INPUT|TEXTAREA|SELECT/.test(e.target.tagName);
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setPal((p) => !p); }
       else if (e.key === "?" && !typing) setHelp((v) => !v);
-      else if (e.key === "Escape") { setModal(null); setPal(false); setHelp(false); }
+      else if (e.key === "Escape") { setModal(null); setPal(false); setHelp(false); setDrawerOpen(false); }
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
   }, []);
 
   const nav = (dir) => {
+    if (view === "month") setMonthDirection(dir);
     if (view === "day") setCur(addDays(cur, dir));
     else if (view === "week") setCur(addDays(cur, 7 * dir));
     else if (view === "month") setCur(addMonths(cur, dir));
@@ -480,7 +485,7 @@ function CalendarApp({ user, onSignOut, authError }) {
   const dstart = decadeOf(cur.getFullYear());
   const yr = view === "custom" ? range : [dstart, dstart + (view === "twenty" ? 19 : 9)];
   const carry = () => setGoals((p) => p.map((g) => (g.level === "day" && !g.done && g.key < dk(today) ? { ...g, key: dk(today) } : g)));
-  const ctx = { carry, range, setRange, cur, setCur, eventsOn, goalsFor, newEvent, newGoal, go, setModal, editGoal, toggleGoal, goals, items, openRange, toggleItem, events: visible, challenges, chOn, toggleCheck, openChallenge, newChallenge, fcId: focusCh, openGoals, calendarColor };
+  const ctx = { carry, range, setRange, cur, setCur, eventsOn, goalsFor, newEvent, newGoal, go, setModal, editGoal, toggleGoal, goals, items, openRange, toggleItem, events: visible, challenges, chOn, toggleCheck, openChallenge, newChallenge, fcId: focusCh, openGoals, calendarColor, monthDirection };
 
   const fileRef = useRef(null);
   const exportData = () => { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify({ events, calendars, goals, items, challenges }, null, 2)], { type: "application/json" })); a.download = "calendar-backup.json"; a.click(); };
@@ -502,6 +507,7 @@ function CalendarApp({ user, onSignOut, authError }) {
   };
   const ym = special ? null : title.match(/^(.*?)(\s\d{4})$/);
   const titleEl = <h1 className="calendar-title">{ym && ["month", "day", "week"].includes(view) ? <>{ym[1]}<span>{ym[2]}</span></> : title}</h1>;
+  const navExpanded = typeof window !== "undefined" && window.matchMedia("(max-width: 800px)").matches ? drawerOpen : side;
   const chips = (
     <>
       {cur >= BIRTH && !["decade", "twenty", "custom", "life"].includes(view) && <span className="agechip">Age {ageOn(cur)}</span>}
@@ -539,7 +545,14 @@ function CalendarApp({ user, onSignOut, authError }) {
         </header>
       ) : (
         <header className="top">
-          <button className="ib sidebar-toggle" onClick={() => setSide(!side)} aria-label="Toggle sidebar"><Ic n="menu" /></button>
+          <button className="ib sidebar-toggle" onClick={() => {
+            if (window.matchMedia("(max-width: 800px)").matches) {
+              setSide(true);
+              setDrawerOpen(true);
+            } else {
+              setSide(!side);
+            }
+          }} aria-label="Toggle navigation" aria-expanded={navExpanded} aria-controls="calendar-drawer"><Ic n="menu" /></button>
           <div className="logo"><span className="logo-d">{today.getDate()}</span></div>
           <Seg className="pg" value={page} onChange={(v) => { setFocusCh(null); setPage(v); }} options={[["cal", "Calendar"], ["goals", "Goals"]]} />
           {!special && (
@@ -582,10 +595,15 @@ function CalendarApp({ user, onSignOut, authError }) {
         </div>
       )}
       <div className="body">
-        {side && !focus && (
-          <aside className="side">
-            <button className="create" onClick={() => newEvent(cur)}><Ic n="plus" s={16} />Create</button>
-            <MiniMonth cur={cur} setCur={(d) => { setFocusCh(null); setPage("cal"); setCur(d); if (view === "year" || view === "decade" || view === "twenty") setView("day"); }} eventsOn={eventsOn} />
+        {drawerOpen && <button className="drawer-scrim" onClick={() => setDrawerOpen(false)} aria-label="Close navigation" />}
+        {(side || drawerOpen) && !focus && (
+          <aside id="calendar-drawer" className={"side" + (drawerOpen ? " mobile-drawer" : "")} aria-label="Calendar navigation">
+            <button className="create" onClick={() => { setDrawerOpen(false); newEvent(cur); }}><Ic n="plus" s={16} />Create</button>
+            <div className="drawer-actions">
+              <button className="btn" onClick={() => { setDrawerOpen(false); setPal(true); }}><Ic n="search" s={16} />Search</button>
+              <button className="btn" onClick={() => setDark(!dark)}><Ic n={dark ? "sun" : "moon"} s={16} />{dark ? "Light theme" : "Dark theme"}</button>
+            </div>
+            <MiniMonth cur={cur} setCur={(d) => { setDrawerOpen(false); setFocusCh(null); setPage("cal"); setCur(d); if (view === "year" || view === "decade" || view === "twenty") setView("day"); }} eventsOn={eventsOn} />
             <TodayCard {...ctx} />
             <div className="cals">
               <div className="cal-head">
@@ -604,12 +622,40 @@ function CalendarApp({ user, onSignOut, authError }) {
             </div>
           </aside>
         )}
-        <main className="main">
+        <main
+          className="main"
+          onTouchStart={(event) => {
+            if (view === "month" && page === "cal") {
+              const touch = event.touches[0];
+              touchStart.current = { x: touch.clientX, y: touch.clientY };
+            }
+          }}
+          onTouchEnd={(event) => {
+            const start = touchStart.current;
+            touchStart.current = null;
+            if (!start) return;
+            const touch = event.changedTouches[0];
+            const dx = touch.clientX - start.x;
+            const dy = touch.clientY - start.y;
+            if (Math.abs(dx) > 60 && Math.abs(dy) < 70) {
+              swiping.current = true;
+              nav(dx < 0 ? 1 : -1);
+              window.setTimeout(() => { swiping.current = false; }, 500);
+            }
+          }}
+          onClickCapture={(event) => {
+            if (swiping.current) {
+              event.preventDefault();
+              event.stopPropagation();
+              swiping.current = false;
+            }
+          }}
+        >
           {fc ? <ChallengeView key={fc.id} c={fc} toggleCheck={toggleCheck} setNote={setNote} onEdit={() => editChallenge(fc)} onRestart={() => setModal({ type: "challenge", data: { title: fc.title, start: dk(today), days: fc.days, note: fc.note, checks: [] } })} />
             : page === "goals" ? <GoalsPage goals={goals} items={items} challenges={challenges} toggleGoal={toggleGoal} deleteGoal={deleteGoal} editGoal={editGoal} toggleItem={toggleItem} setModal={setModal} openChallenge={openChallenge} newGoal={newGoal} newChallenge={newChallenge} openRange={openRange} go={go} toggleCheck={toggleCheck} />
             : <>
           {(view === "day" || view === "week") && <TimeGrid {...ctx} days={view === "day" ? [cur] : Array.from({ length: 7 }, (_, i) => addDays(startOfWeek(cur), i))} />}
-          {view === "month" && <MonthView {...ctx} />}
+          {view === "month" && <MonthView key={`${cur.getFullYear()}-${cur.getMonth()}`} {...ctx} />}
           {view === "year" && <YearView {...ctx} items={tlItems} />}
           {["decade", "twenty", "custom"].includes(view) && <YearsView {...ctx} items={tlItems} view={view} from={yr[0]} to={yr[1]} />}
           {view === "life" && <LifeView />}
@@ -618,6 +664,11 @@ function CalendarApp({ user, onSignOut, authError }) {
         {panel && !focus && page !== "goals" && <GoalsPanel {...ctx} daily={daily} />}
       </div>
 
+      {!focus && !fc && page === "cal" && view === "month" && (
+        <button className="mobile-fab" onClick={() => newEvent(cur)} aria-label="Create event" title="Create event">
+          <Ic n="plus" s={24} />
+        </button>
+      )}
       {focus && (
         <div className="dock" role="toolbar" aria-label="Focus controls">
           <button className="ib" onClick={() => nav(-1)} aria-label="Previous"><Ic n="left" /></button>
@@ -714,7 +765,7 @@ function MonthView(p) {
     }
   });
   return (
-    <div className="month">
+    <div className="month" style={{ "--month-offset": p.monthDirection < 0 ? "-12px" : "12px" }}>
       <div className="mrow head">{DAYS.map((d) => <div key={d}>{d}</div>)}</div>
       <div className="mcells">
         {Array.from({ length: 6 }, (_, weekIndex) => {
@@ -754,7 +805,7 @@ function MonthView(p) {
                     className={"cell" + (column === 6 ? " last-col" : "") + (weekIndex === 5 ? " last-week" : "") + (d.getMonth() !== p.cur.getMonth() ? " dim" : "") + (d.getDay() % 6 === 0 ? " we" : "") + (selection.inSel(k) ? " pick" : "")}
                     style={{ gridColumn: column + 1, gridRow: "1 / -1" }}
                     onPointerDown={(event) => {
-                      if (event.button === 0 && !event.target.closest(".chip,.gchip,.num,.cdots")) selection.down(k);
+                      if (event.pointerType !== "touch" && event.button === 0 && !event.target.closest(".chip,.gchip,.num,.cdots")) selection.down(k);
                     }}
                     onPointerEnter={() => selection.over(k)}
                     onClickCapture={(event) => {
@@ -1633,6 +1684,8 @@ color-scheme:light;
 @keyframes rise{from{opacity:0;transform:translate(-50%,12px)}to{opacity:1;transform:translate(-50%,0)}}
 @keyframes dfade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 @keyframes pulse{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--red) 55%,transparent)}50%{box-shadow:0 0 0 4px transparent}}
+@keyframes month-in{from{opacity:.55;transform:translateX(var(--month-offset,12px))}to{opacity:1;transform:translateX(0)}}
+@keyframes drawer-in{from{opacity:.7;transform:translateX(-18px)}to{opacity:1;transform:translateX(0)}}
 
 /* ============ BUTTONS & CONTROLS ============ */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;border:1px solid var(--line);background:var(--raise);box-shadow:var(--sh1);color:var(--fg);font-weight:500;white-space:nowrap;transition:background .15s,border-color .15s,transform .1s,box-shadow .15s}
@@ -1718,7 +1771,7 @@ color-scheme:light;
 .num.big{font-size:20px;font-weight:500;width:40px;height:40px;border-radius:12px;margin:2px 0 0}
 
 /* month */
-.month{height:100%;display:flex;flex-direction:column;min-width:560px}
+.month{height:100%;display:flex;flex-direction:column;min-width:560px;animation:month-in .22s cubic-bezier(.2,.8,.2,1) both}
 .mrow.head{display:grid;grid-template-columns:repeat(7,1fr);text-align:center;padding:11px 0 9px;color:var(--mute);font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;border-bottom:1px solid var(--line)}
 .mcells{flex:1;display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:repeat(6,minmax(0,1fr))}
 .month-week{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));min-height:0;min-width:0}
@@ -1816,6 +1869,7 @@ color-scheme:light;
 .goal-delete{color:var(--rfg);opacity:0;flex-shrink:0}.gr:hover .goal-delete,.gr:focus-within .goal-delete,.gpr:hover .goal-delete,.gpr:focus-within .goal-delete{opacity:1}
 @media(hover:none){.goal-delete{opacity:1}}
 .empty{color:var(--faint);font-size:12px;padding:2px 4px}
+.mobile-fab{display:none}.drawer-actions{display:none}
 .carry{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;height:34px;border-radius:10px;background:var(--ab);color:var(--ac2);margin-bottom:10px;font-weight:600;font-size:12.5px;transition:background .15s}.carry:hover{background:var(--ab2)}
 .dcard{position:relative;overflow:hidden;flex-shrink:0;border-radius:18px;padding:14px 16px 16px;color:#fff;border:1px solid rgba(255,255,255,.14);
 background:radial-gradient(90% 120% at 100% 0%,rgba(217,70,239,.5),transparent 58%),radial-gradient(110% 120% at 0% 100%,color-mix(in srgb,var(--ac) 75%,#000),transparent 62%),linear-gradient(160deg,color-mix(in srgb,var(--ac) 50%,#0b0b16),color-mix(in srgb,var(--ac) 22%,#14081f));
@@ -1851,27 +1905,26 @@ box-shadow:0 14px 32px -10px color-mix(in srgb,var(--ac) 55%,transparent),inset 
 
 /* ============ RESPONSIVE / MOTION ============ */
 @media(max-width:900px){.daily,.spill span,.spill kbd{display:none}.spill{min-width:0;padding:0 10px}.rail b{font-size:20px}.yr{grid-template-columns:76px 1fr}}
-@media(max-width:800px){.gp,.side{display:none}.logo span:last-child{display:none}.dock{max-width:96vw;overflow:auto}}
+@media(max-width:800px){.gp,.side{display:none}.side.mobile-drawer{display:block;position:fixed;z-index:41;inset:0 auto 0 0;width:min(320px,calc(100vw - 52px));padding:calc(18px + env(safe-area-inset-top)) 16px calc(18px + env(safe-area-inset-bottom));overflow-y:auto;background:var(--bg);box-shadow:var(--sh3);animation:drawer-in .22s cubic-bezier(.2,.8,.2,1)}.drawer-scrim{position:fixed;inset:0;z-index:40;background:rgba(8,10,16,.48);backdrop-filter:blur(2px)}.drawer-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:-8px 0 18px}.drawer-actions .btn{height:36px;font-size:12px}.logo span:last-child{display:none}.dock{max-width:96vw;overflow:auto}}
 @media(max-width:600px){
   .gc{height:100dvh;min-height:100svh}
-  .top:not(.focus-top){display:grid;grid-template-columns:34px minmax(86px,auto) minmax(0,1fr) 52px 60px;grid-template-rows:38px 36px;gap:4px;height:auto;min-height:82px;padding:6px 8px}
+  .top:not(.focus-top){display:grid;grid-template-columns:40px minmax(0,1fr) 64px 60px;grid-template-rows:36px 34px;gap:4px;height:auto;min-height:78px;padding:6px 8px}
   .top:not(.focus-top)>.sidebar-toggle{grid-column:1;grid-row:1}
   .top:not(.focus-top)>.logo{display:none}
-  .top:not(.focus-top)>.pg{grid-column:2;grid-row:1;justify-self:start;max-width:100%}
-  .top:not(.focus-top)>.pg button{padding:5px 8px;font-size:11px}
-  .top:not(.focus-top)>.calendar-title{grid-column:3;grid-row:1;min-width:0;margin:0 2px;font-size:15px}
-  .top:not(.focus-top)>.today-nav{grid-column:4;grid-row:1;height:30px;padding:0 7px;font-size:11px}
-  .top:not(.focus-top)>.calendar-nav{grid-column:5;grid-row:1;gap:0}
+  .top:not(.focus-top)>.pg{grid-column:1 / 3;grid-row:2;justify-self:start;max-width:100%;margin:0}
+  .top:not(.focus-top)>.pg button{padding:5px 10px;font-size:11px}
+  .top:not(.focus-top)>.calendar-title{grid-column:2;grid-row:1;min-width:0;margin:0 4px;font-size:16px}
+  .top:not(.focus-top)>.today-nav{grid-column:3;grid-row:1;height:30px;padding:0 8px;font-size:11px}
+  .top:not(.focus-top)>.calendar-nav{grid-column:4;grid-row:1;gap:0}
   .top:not(.focus-top)>.calendar-nav .ib{width:28px;height:30px}
-  .top:not(.focus-top)>.back-nav{grid-column:4;grid-row:1;height:30px;padding:0 7px}
+  .top:not(.focus-top)>.back-nav{grid-column:3;grid-row:1;height:30px;padding:0 7px}
   .top:not(.focus-top)>.agechip{display:none}
   .top:not(.focus-top)>.sp{display:none}
-  .top:not(.focus-top)>.mobile-search{grid-column:1;grid-row:2;width:34px;min-width:34px;height:32px;justify-content:center;padding:0}
-  .top:not(.focus-top)>.view-picker{grid-column:2;grid-row:2;justify-self:start}
+  .top:not(.focus-top)>.mobile-search{display:none}
+  .top:not(.focus-top)>.view-picker{grid-column:3;grid-row:2;justify-self:start}
   .top:not(.focus-top)>.view-picker .btn{height:32px;padding:0 8px;font-size:11px}
-  .top:not(.focus-top)>.focus-toggle{grid-column:3;grid-row:2;justify-self:end}
-  .top:not(.focus-top)>.theme-toggle{grid-column:4;grid-row:2;justify-self:center}
-  .top:not(.focus-top)>.cloud-account{grid-column:5;grid-row:2;justify-self:end;margin:0;padding:0;border:0}
+  .top:not(.focus-top)>.focus-toggle,.top:not(.focus-top)>.theme-toggle{display:none}
+  .top:not(.focus-top)>.cloud-account{grid-column:4;grid-row:2;justify-self:end;margin:0;padding:0;border:0}
   .top:not(.focus-top) .cloud-sync,.top:not(.focus-top) .cloud-email{display:none}
   .top:not(.focus-top)>.panel-toggle,.top:not(.focus-top)>.quote-toggle{display:none}
   .focus-top{height:auto;min-height:56px;padding:8px 12px;gap:8px;flex-wrap:wrap}
@@ -1880,7 +1933,11 @@ box-shadow:0 14px 32px -10px color-mix(in srgb,var(--ac) 55%,transparent),inset 
   .focus-top .cloud-account{margin-left:auto}
   .body{gap:0;padding:0 6px calc(6px + env(safe-area-inset-bottom))}
   .main{width:100%;border-radius:12px;min-height:0}
-  .month{min-width:0}
+  .month{min-width:0;touch-action:pan-y}
+  .drawer-actions{display:grid}
+  .mobile-fab{position:fixed;right:18px;bottom:calc(18px + env(safe-area-inset-bottom));z-index:25;width:56px;height:56px;border-radius:18px;display:grid;place-items:center;background:var(--ac);color:var(--onac);box-shadow:0 6px 18px color-mix(in srgb,var(--ac) 36%,transparent),0 2px 6px rgba(0,0,0,.18);transition:transform .18s cubic-bezier(.2,.8,.2,1),box-shadow .18s}
+  .mobile-fab:active{transform:scale(.92)}
+  .mobile-fab:focus-visible{outline:3px solid var(--ac);outline-offset:3px}
   .mrow.head{padding:8px 0 6px;font-size:9px}
   .month-week>.cell{padding:0 2px 2px}
   .month-week>.cell>.num{height:22px;min-width:20px;padding:0 3px;font-size:11px}
@@ -1918,12 +1975,12 @@ box-shadow:0 14px 32px -10px color-mix(in srgb,var(--ac) 55%,transparent),inset 
   .ti{font-size:19px}
 }
 @media(max-width:360px){
-  .top:not(.focus-top){grid-template-columns:30px minmax(78px,auto) minmax(0,1fr) 46px 54px;gap:3px;padding-inline:5px}
-  .top:not(.focus-top)>.sidebar-toggle{width:30px}
-  .top:not(.focus-top)>.pg button{padding:5px 6px}
+  .top:not(.focus-top){grid-template-columns:36px minmax(0,1fr) 58px 54px;gap:3px;padding-inline:5px}
+  .top:not(.focus-top)>.sidebar-toggle{width:34px}
+  .top:not(.focus-top)>.pg button{padding:5px 8px}
   .top:not(.focus-top)>.today-nav{padding:0 5px}
   .top:not(.focus-top)>.calendar-nav .ib{width:25px}
-  .top:not(.focus-top)>.cloud-account .cloud-signout{padding:0 5px}
+  .top:not(.focus-top)>.cloud-account .cloud-signout{padding:0 5px;font-size:10px}
   .month-week>.cell>.num{font-size:10px}
   .month-cell-items .chip,.month-cell-items .gchip{font-size:8px}
 }
