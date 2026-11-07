@@ -133,8 +133,8 @@ const fmtK = (k) => (k.length === 7 ? `${MONTHS[+k.slice(5) - 1].slice(0, 3)} ${
 function Seg({ value, onChange, options, className = "" }) {
   const i = Math.max(0, options.findIndex(([k]) => k === value));
   return (
-    <div className={"iseg " + className} style={{ "--n": options.length, "--i": i }} role="tablist">
-      <span className="thumb" />
+    <div className={"iseg " + className} style={{ "--n": options.length }} role="tablist">
+      <span className="thumb" style={{ transform: `translateX(${i * 100}%)` }} />
       {options.map(([k, n]) => <button key={k} role="tab" aria-selected={k === value} className={k === value ? "on" : ""} onClick={() => onChange(k)}>{n}</button>)}
     </div>
   );
@@ -2058,7 +2058,7 @@ color-scheme:light;
 .ib{display:grid;place-items:center;width:32px;height:32px;border-radius:8px;color:var(--mute);transition:background .15s,color .15s}.ib:hover{background:var(--hover);color:var(--fg)}.ib.sm{width:26px;height:26px;border-radius:7px}
 .link{display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:500;color:var(--ac2);padding:3px 8px;border-radius:7px;transition:background .15s}.link:hover{background:var(--ab)}
 .iseg{position:relative;display:inline-grid;grid-template-columns:repeat(var(--n),1fr);padding:3px;border-radius:10px;background:var(--fill)}
-.iseg .thumb{position:absolute;top:3px;bottom:3px;left:3px;width:calc((100% - 6px)/var(--n));border-radius:7px;background:var(--thumb);box-shadow:0 1px 3px rgba(0,0,0,.14),0 0 0 .5px rgba(0,0,0,.06);transform:translateX(calc(var(--i)*100%));transition:transform .28s cubic-bezier(.3,.9,.3,1)}
+.iseg .thumb{position:absolute;top:3px;bottom:3px;left:3px;width:calc((100% - 6px)/var(--n));border-radius:7px;background:var(--thumb);box-shadow:0 1px 3px rgba(0,0,0,.14),0 0 0 .5px rgba(0,0,0,.06);transition:transform .28s cubic-bezier(.3,.9,.3,1)}
 .iseg button{position:relative;z-index:1;padding:5px 14px;font-size:12.5px;font-weight:500;border-radius:7px;white-space:nowrap;color:var(--mute);transition:color .15s}.iseg button:hover{color:var(--fg)}.iseg button.on{color:var(--fg);font-weight:600}
 .iseg.glass{background:rgba(255,255,255,.16);display:grid;backdrop-filter:blur(8px)}.iseg.glass .thumb{background:rgba(255,255,255,.95)}.iseg.glass button{color:rgba(255,255,255,.85)}.iseg.glass button.on{color:#1a1633}
 .swt{width:38px;height:22px;border-radius:11px;background:var(--track);position:relative;transition:background .2s;flex-shrink:0}
@@ -2547,7 +2547,8 @@ button.gtt:hover{color:var(--ac2)}
 .mobile-tabs{display:none}
 .task-page{max-width:1120px;margin:0 auto;padding:30px clamp(16px,3vw,38px) 48px}
 .task-heading{display:flex;align-items:center;justify-content:space-between;gap:18px;margin:0 0 22px}
-.task-heading h2{margin:4px 0 6px;font-size:30px;font-weight:650;letter-spacing:-.04em}
+.task-heading>div{min-width:0}
+.task-heading h2{margin:4px 0 6px;font-size:30px;font-weight:650;letter-spacing:-.04em;line-height:1.15}
 .task-heading p{max-width:54ch;color:var(--mute);font-size:13px}
 .eyebrow{color:var(--ac2);font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
 .task-add{height:40px;padding:0 16px;border-radius:12px}
@@ -2564,9 +2565,12 @@ button.gtt:hover{color:var(--ac2)}
 .task-list-card,.task-side-card{border:1px solid var(--line);border-radius:18px;background:var(--tile);box-shadow:var(--sh1)}
 .task-list-card{padding:12px}
 .task-list-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:4px 4px 12px}
-.task-list-heading>div{display:flex;align-items:baseline;gap:8px}.task-list-heading h3,.task-side-card h3{margin:0;font-size:14px;font-weight:650}
+.task-list-heading>div{display:flex;align-items:center;gap:8px;min-width:0}.task-list-heading h3,.task-side-card h3{margin:0;font-size:14px;font-weight:650}
 .task-list-heading>div>span{font-size:11px;color:var(--mute)}
-.task-list-heading .iseg button{padding:5px 10px;font-size:11px}
+.task-list-heading .iseg{display:flex;width:228px;flex-shrink:0}
+.task-list-heading .iseg .thumb{display:none}
+.task-list-heading .iseg button{display:flex;flex:1 1 0;align-items:center;justify-content:center;min-width:0;padding:5px 10px;font-size:11px}
+.task-list-heading .iseg button.on{border-radius:7px;background:var(--thumb);box-shadow:0 1px 3px rgba(0,0,0,.14),0 0 0 .5px rgba(0,0,0,.06)}
 .task-search{display:flex;align-items:center;gap:9px;height:40px;padding:0 12px;margin:0 0 8px;border:1px solid var(--line);border-radius:11px;background:var(--bg);color:var(--faint)}
 .task-search:focus-within{border-color:var(--ac);box-shadow:0 0 0 3px color-mix(in srgb,var(--ac) 18%,transparent)}
 .task-search input{width:100%;height:100%;border:0;outline:0;background:transparent;color:var(--fg);font:inherit}
@@ -2672,7 +2676,7 @@ button.gtt:hover{color:var(--ac2)}
   .main{border-radius:18px}
   .mobile-fab{right:18px;bottom:calc(84px + env(safe-area-inset-bottom));width:54px;height:54px;border-radius:17px}
   .task-page{padding:22px 14px 28px}
-  .task-heading{align-items:flex-start;margin-bottom:16px}
+  .task-heading{align-items:center;margin-bottom:16px}
   .task-heading h2{font-size:26px}
   .task-heading p{font-size:12px;line-height:1.55}
   .task-add{width:42px;height:42px;padding:0;font-size:0;flex-shrink:0}
