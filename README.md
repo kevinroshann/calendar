@@ -15,3 +15,9 @@
 Create an account in the app, then sign in. On the first sign-in for an account, existing calendar data in this browser is copied into that account's Supabase row. Later calendar changes sync automatically. Theme and display preferences remain in this browser.
 
 The publishable key is intended for browser use. Never put a Supabase `service_role` key in this app; the database's Row Level Security policies enforce account-level access.
+
+## Public holidays and reminders
+
+The holiday calendar starts with India selected. India dates for 2026–2030 are bundled from [Google's public “Holidays in India” calendar](https://calendar.google.com/calendar/ical/en.indian%23holiday%40group.v.calendar.google.com/public/basic.ics); regional observances and tentative religious dates can differ from local government notifications. The Tasks page lets you choose the United States, United Kingdom, Canada, or Australia, which load from [Nager.Date](https://date.nager.at/).
+
+To receive event reminders, open **Tasks → Enable phone reminders**, allow notifications in the browser or phone settings, and choose a reminder when creating an event. The app must be served over HTTPS (localhost is also supported). On iOS, install the site to the Home Screen and use iOS 16.4 or newer. Notifications are scheduled while the app is open. Delivery after the app/browser has been fully closed requires a push-notification service and server-side push credentials, which this project does not currently have.

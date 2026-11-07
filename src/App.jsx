@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import AuthScreen from "./AuthScreen";
+import indiaHolidayDates from "./indiaHolidays.json";
 import supabase from "./supabase";
 
 /* ---------- date helpers ---------- */
@@ -22,7 +23,9 @@ const DEFAULT_CALS = [
   { id: "work", name: "Work", color: "#10b981" },
   { id: "family", name: "Family", color: "#f43f5e" },
   { id: "birthdays", name: "Birthdays", color: "#f59e0b" },
+  { id: "holidays", name: "Public holidays", color: "#f59e0b" },
 ];
+const HOLIDAY_COUNTRIES = [["IN", "India"], ["US", "United States"], ["GB", "United Kingdom"], ["CA", "Canada"], ["AU", "Australia"]];
 const normalizeCalendars = (saved = []) => {
   const ids = new Set(DEFAULT_CALS.map((calendar) => calendar.id));
   const custom = Array.isArray(saved) ? saved.flatMap((calendar) => {
@@ -44,6 +47,16 @@ const goalKey = (level, d) =>
   level === "day" ? dk(d) : level === "month" ? dk(d).slice(0, 7) : level === "year" ? String(d.getFullYear()) : String(decadeOf(d.getFullYear()));
 
 const VIEWS = [["day","Day","D"],["week","Week","W"],["month","Month","M"],["year","Year","Y"],["decade","Decade","X"],["twenty","20 years","T"],["custom","Custom range","C"],["life","Life in weeks","L"]];
+const VIEW_HINTS = {
+  day: "One day, hour by hour",
+  week: "Seven days side by side",
+  month: "A familiar monthly grid",
+  year: "Every month at a glance",
+  decade: "Plans across ten years",
+  twenty: "A twenty-year overview",
+  custom: "Choose your own years",
+  life: "Your life in weeks",
+};
 
 const BIRTH = new Date(2006, 6, 17);
 const ageOn = (d) => d.getFullYear() - 2006 - (d < new Date(d.getFullYear(), 6, 17) ? 1 : 0);
@@ -102,6 +115,7 @@ function useDrag(done) {
 const today = new Date();
 const IC = {
   menu: "M4 7h16M4 12h16M4 17h16", search: "M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM21 21l-4.3-4.3",
+  calendar: "M8 2v4m8-4v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14H3V6a2 2 0 0 1 2-2z",
   moon: "M20.5 14A8.5 8.5 0 1 1 10 3.5 6.5 6.5 0 0 0 20.5 14z", sun: "M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4",
   left: "M15 5l-7 7 7 7", x: "M6 6l12 12M18 6L6 18", right: "M9 5l7 7-7 7", down: "M6 9l6 6 6-6", refresh: "M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7",
   sliders: "M4 7h9M17 7h3M4 17h3M11 17h9M15 5a2 2 0 1 0 0 4 2 2 0 1 0 0-4zM9 15a2 2 0 1 0 0 4 2 2 0 1 0 0-4z",
@@ -226,9 +240,12 @@ export default function GoogleCalendarClone() {
 
 function CloudStatus({ message, error, onRetry, onSignOut }) {
   return (
-    <main className="auth-page">
-      <section className="auth-card" aria-live="polite">
-        <h1>{message}</h1>
+    <main className="status-page">
+      <section className="status-card" aria-live="polite">
+        <img className="status-mark" src="/calendar-mark.svg" alt="" />
+        <span className="status-kicker">{error ? "Calendar connection" : "Your time, thoughtfully planned"}</span>
+        <h1>{error ? "We couldn’t connect" : message}</h1>
+        {!error && <span className="status-spinner" role="status" aria-label="Loading" />}
         {error && <div className="auth-error" role="alert">{error}</div>}
         {onRetry && <button className="auth-submit" onClick={onRetry}>Retry</button>}
         {onSignOut && <button className="auth-switch" onClick={onSignOut}>Sign out</button>}
@@ -256,6 +273,13 @@ function CalendarApp({ user, onSignOut, authError }) {
   const [goals, setGoals] = useState(() => load("goals", []));
   const [items, setItems] = useState(() => load("items", []));
   const [challenges, setChallenges] = useState(() => load("challenges", []));
+  const [holidayCountry, setHolidayCountry] = useState(() => load("holiday-country", "IN"));
+  const [holidays, setHolidays] = useState([]);
+  const [holidayError, setHolidayError] = useState("");
+  const [notificationPermission, setNotificationPermission] = useState(() =>
+    typeof window !== "undefined" && "Notification" in window ? window.Notification.permission : "unsupported",
+  );
+  const [reminderNotice, setReminderNotice] = useState("");
   const [cloudReady, setCloudReady] = useState(false);
   const [cloudError, setCloudError] = useState("");
   const [syncStatus, setSyncStatus] = useState("saved");
@@ -276,16 +300,158 @@ function CalendarApp({ user, onSignOut, authError }) {
   const [daily, setDaily] = useState(() => load("daily", true));
   const [toast, setToast] = useState(null);
   const [focusCh, setFocusCh] = useState(null);
-  const [page, setPage] = useState("cal"); // "cal" | "goals"
+  const [page, setPage] = useState("cal"); // "cal" | "tasks" | "goals"
+  const routeHistory = useRef([]);
+  const routeSignatureRef = useRef("");
+  const skipRoutePush = useRef(false);
+  const holidayCache = useRef(new Map());
   const touchStart = useRef(null);
   const swiping = useRef(false);
   const [monthDirection, setMonthDirection] = useState(1);
   const fc = focusCh ? challenges.find((c) => c.id === focusCh) : null;
-  const special = !!fc || page === "goals";
+  const special = !!fc || page !== "cal";
   const showView = (v) => { setFocusCh(null); setPage("cal"); setView(v); };
   useEffect(() => { if (focusCh && !fc) setFocusCh(null); });
   useEffect(() => { try { localStorage.setItem("gc-daily", JSON.stringify(daily)); } catch {} }, [daily]);
+  useEffect(() => { try { localStorage.setItem("gc-holiday-country", JSON.stringify(holidayCountry)); } catch {} }, [holidayCountry]);
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 6000); return () => clearTimeout(t); }, [toast]);
+  useEffect(() => {
+    if (!cloudReady) return undefined;
+    const year = cur.getFullYear();
+    const key = `${holidayCountry}-${year}`;
+    const cached = holidayCache.current.get(key);
+    if (cached) {
+      setHolidays(cached);
+      setHolidayError("");
+      return undefined;
+    }
+
+    if (holidayCountry === "IN") {
+      const entries = indiaHolidayDates
+        .filter(([date]) => date.startsWith(`${year}-`))
+        .map(([date, name]) => ({ date, localName: name, name }));
+      holidayCache.current.set(key, entries);
+      setHolidays(entries);
+      setHolidayError(entries.length ? "" : "India holiday data is available for 2026–2030.");
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    setHolidayError("");
+    fetch(`https://date.nager.at/api/v3/PublicHolidays/${year}/${holidayCountry}`, { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error(`Holiday service returned ${response.status}.`);
+        return response.json();
+      })
+      .then((data) => {
+        if (!Array.isArray(data)) throw new Error("Holiday service returned an invalid response.");
+        const valid = data.filter((holiday) => typeof holiday.date === "string" && typeof holiday.name === "string");
+        holidayCache.current.set(key, valid);
+        setHolidays(valid);
+      })
+      .catch((error) => {
+        if (error.name !== "AbortError") {
+          setHolidayError(error instanceof Error ? error.message : "Could not load public holidays.");
+          setHolidays([]);
+        }
+      });
+
+    return () => controller.abort();
+  }, [cloudReady, cur, holidayCountry]);
+  useEffect(() => {
+    if (!cloudReady) return;
+    const route = { page, focusCh, view, cur: dk(cur), range, focus };
+    const signature = JSON.stringify(route);
+    if (!routeHistory.current.length) {
+      window.history.pushState({ calendarAppAnchor: true }, "", window.location.href);
+      window.history.pushState({ calendarAppRoute: route }, "", window.location.href);
+      routeHistory.current = [route];
+      routeSignatureRef.current = signature;
+    } else if (skipRoutePush.current) {
+      skipRoutePush.current = false;
+      routeSignatureRef.current = signature;
+    } else if (routeSignatureRef.current !== signature) {
+      routeHistory.current.push(route);
+      routeSignatureRef.current = signature;
+      window.history.pushState({ calendarAppRoute: route }, "", window.location.href);
+    }
+  }, [cloudReady, page, focusCh, view, cur, range, focus]);
+  useEffect(() => {
+    if (!cloudReady) return undefined;
+    const back = () => {
+      if (modal || pal || help || drawerOpen || menu) {
+        setModal(null);
+        setPal(false);
+        setHelp(false);
+        setDrawerOpen(false);
+        setMenu(false);
+        const route = routeHistory.current.at(-1);
+        if (route) window.history.pushState({ calendarAppRoute: route }, "", window.location.href);
+        return;
+      }
+
+      if (routeHistory.current.length > 1) {
+        routeHistory.current.pop();
+        const previous = routeHistory.current.at(-1);
+        skipRoutePush.current = true;
+        setPage(previous.page);
+        setFocusCh(previous.focusCh);
+        setView(previous.view);
+        setCur(parse(previous.cur));
+        setRange(previous.range);
+        setFocus(previous.focus);
+        return;
+      }
+
+      const route = routeHistory.current[0];
+      if (route) window.history.pushState({ calendarAppRoute: route }, "", window.location.href);
+    };
+    window.addEventListener("popstate", back);
+    return () => window.removeEventListener("popstate", back);
+  }, [cloudReady, modal, pal, help, drawerOpen, menu]);
+  useEffect(() => {
+    if (!cloudReady || notificationPermission !== "granted") return undefined;
+    const timers = [];
+    events.forEach((event) => {
+      if (event.allDay || event.reminderMinutes == null || !event.date || !event.start) return;
+      const minutes = Number(event.reminderMinutes);
+      if (!Number.isFinite(minutes) || minutes < 0) return;
+      const startsAt = new Date(`${event.date}T${event.start}:00`).getTime();
+      if (!Number.isFinite(startsAt) || startsAt <= Date.now()) return;
+      const fireAt = startsAt - minutes * 60_000;
+      const key = `gc-reminder-${user.id}-${event.id}-${event.date}-${event.start}-${minutes}`;
+      if (sessionStorage.getItem(key)) return;
+      const notify = async () => {
+        try {
+          if (window.Notification.permission !== "granted") return;
+          const options = {
+            body: `${event.title} · ${fmtTime(event.start)}`,
+            tag: key,
+            icon: "/calendar-mark.svg",
+          };
+          if ("serviceWorker" in navigator) {
+            const registration = await navigator.serviceWorker.ready;
+            await registration.showNotification("Upcoming event", options);
+          } else {
+            new window.Notification("Upcoming event", options);
+          }
+          sessionStorage.setItem(key, "shown");
+        } catch (error) {
+          setReminderNotice(error instanceof Error ? error.message : "Could not show this reminder.");
+        }
+      };
+      const schedule = () => {
+        const delay = Math.max(0, fireAt - Date.now());
+        const timer = window.setTimeout(() => {
+          if (fireAt - Date.now() > 0) schedule();
+          else notify();
+        }, Math.min(delay, 2_147_000_000));
+        timers.push(timer);
+      };
+      schedule();
+    });
+    return () => timers.forEach(window.clearTimeout);
+  }, [cloudReady, events, notificationPermission, user.id]);
   const remove = (kind, id) => {
     const [list, setL] = kind === "event" ? [events, setEvents] : kind === "goal" ? [goals, setGoals] : kind === "challenge" ? [challenges, setChallenges] : [items, setItems];
     const obj = list.find((x) => x.id === id);
@@ -293,6 +459,24 @@ function CalendarApp({ user, onSignOut, authError }) {
     setToast({ msg: `Deleted “${obj?.title || "item"}”`, undo: () => setL((p) => [...p, obj]) });
   };
   const deleteGoal = (id) => remove("goal", id);
+  const enableReminders = async () => {
+    if (!("Notification" in window)) {
+      setNotificationPermission("unsupported");
+      setReminderNotice("This browser does not support phone notifications.");
+      return;
+    }
+    try {
+      const permission = await window.Notification.requestPermission();
+      setNotificationPermission(permission);
+      setReminderNotice(
+        permission === "granted"
+          ? "Notifications are enabled for events with a reminder."
+          : "Notifications are blocked. Allow them in your browser or phone settings.",
+      );
+    } catch (error) {
+      setReminderNotice(error instanceof Error ? error.message : "Could not enable notifications.");
+    }
+  };
   useEffect(() => { try { localStorage.setItem("gc-dark", JSON.stringify(dark)); localStorage.setItem("gc-accent", JSON.stringify(accent)); } catch {} }, [dark, accent]);
   useEffect(() => {
     let active = true;
@@ -378,7 +562,7 @@ function CalendarApp({ user, onSignOut, authError }) {
       const typing = /INPUT|TEXTAREA|SELECT/.test(e.target.tagName);
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setPal((p) => !p); }
       else if (e.key === "?" && !typing) setHelp((v) => !v);
-      else if (e.key === "Escape") { setModal(null); setPal(false); setHelp(false); setDrawerOpen(false); }
+      else if (e.key === "Escape") { setModal(null); setPal(false); setHelp(false); setDrawerOpen(false); setMenu(false); }
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
@@ -415,6 +599,7 @@ function CalendarApp({ user, onSignOut, authError }) {
   const title = (() => {
     const y = cur.getFullYear();
     if (fc) return fc.title;
+    if (page === "tasks") return "Tasks";
     if (page === "goals") return "Goals";
     if (view === "day") return `${MONTHS[cur.getMonth()]} ${cur.getDate()}, ${y}`;
     if (view === "custom") return `${range[0]} – ${range[1]}`;
@@ -426,11 +611,22 @@ function CalendarApp({ user, onSignOut, authError }) {
   })();
 
   const calendarColor = (id) => calendars.find((calendar) => calendar.id === id)?.color || "#6366f1";
-  const visible = events.filter((e) => !hidden[e.cal]);
+  const holidayEvents = holidays.map((holiday) => ({
+    id: `holiday-${holiday.date}-${holiday.name}`,
+    title: holiday.localName || holiday.name,
+    date: holiday.date,
+    start: "00:00",
+    end: "23:59",
+    allDay: true,
+    cal: "holidays",
+    holiday: true,
+    desc: holiday.localName && holiday.localName !== holiday.name ? holiday.name : "",
+  }));
+  const visible = [...events, ...holidayEvents].filter((e) => !hidden[e.cal]);
   const eventsOn = (d) => visible.filter((e) => e.date === dk(d)).sort((a, b) => a.start.localeCompare(b.start));
   const newEvent = (d, start = "09:00", allDay = false, endAt) => {
     const h = Math.min(1439, endAt ? mins(endAt) : mins(start) + 60);
-    setModal({ type: "event", data: { title: "", date: dk(d), start, end: `${pad(Math.min(23, Math.floor(h / 60)))}:${pad(h % 60)}`, allDay, cal: "my", desc: "" } });
+    setModal({ type: "event", data: { title: "", date: dk(d), start, end: `${pad(Math.min(23, Math.floor(h / 60)))}:${pad(h % 60)}`, allDay, cal: "my", desc: "", reminderMinutes: 10 } });
   };
   const newGoal = (level, d) => setModal({ type: "goal", data: { title: "", level, date: dk(d), done: false } });
   const go = (v, d) => { setFocusCh(null); setPage("cal"); setView(v); setCur(d); };
@@ -444,7 +640,23 @@ function CalendarApp({ user, onSignOut, authError }) {
   const newChallenge = (n = 21, start = dk(today)) => setModal({ type: "challenge", data: { title: "", start, days: n, note: "", checks: [] } });
   const openChallenge = (c) => { setFocusCh(c.id); setPage("cal"); };
   const editChallenge = (c) => setModal({ type: "challenge", data: c });
+  const openTasks = () => { setFocusCh(null); setPage("tasks"); };
   const openGoals = () => { setFocusCh(null); setPage("goals"); };
+  const backOneStep = () => {
+    if (modal || pal || help || drawerOpen || menu) {
+      setModal(null);
+      setPal(false);
+      setHelp(false);
+      setDrawerOpen(false);
+      setMenu(false);
+    } else if (routeHistory.current.length > 1) {
+      window.history.back();
+    } else {
+      setFocus(false);
+      setFocusCh(null);
+      setPage("cal");
+    }
+  };
   const saveChallenge = (c) => setChallenges((p) => (c.id ? p.map((x) => (x.id === c.id ? c : x)) : [...p, { ...c, id: Date.now() }]));
   const toggleCheck = (id, k) => {
     const c = challenges.find((x) => x.id === id); if (!c) return;
@@ -506,7 +718,7 @@ function CalendarApp({ user, onSignOut, authError }) {
     e.target.value = "";
   };
   const ym = special ? null : title.match(/^(.*?)(\s\d{4})$/);
-  const titleEl = <h1 className="calendar-title">{ym && ["month", "day", "week"].includes(view) ? <>{ym[1]}<span>{ym[2]}</span></> : title}</h1>;
+  const titleEl = <h1 className="calendar-title"><img className="title-mark" src="/calendar-mark.svg" alt="" />{ym && ["month", "day", "week"].includes(view) ? <>{ym[1]}<span>{ym[2]}</span></> : title}</h1>;
   const navExpanded = typeof window !== "undefined" && window.matchMedia("(max-width: 800px)").matches ? drawerOpen : side;
   const chips = (
     <>
@@ -540,7 +752,7 @@ function CalendarApp({ user, onSignOut, authError }) {
           {chips}
           <div className="sp" />
           <span className="fbadge"><i />Focus</span>
-          <button className="btn" onClick={() => setFocus(false)}><Ic n="shrink" s={15} />Exit focus<kbd>F</kbd></button>
+          <button className="btn" onClick={backOneStep}><Ic n="shrink" s={15} />Exit focus<kbd>F</kbd></button>
           <CloudAccount email={user.email} syncStatus={syncStatus} onSignOut={onSignOut} />
         </header>
       ) : (
@@ -553,36 +765,39 @@ function CalendarApp({ user, onSignOut, authError }) {
               setSide(!side);
             }
           }} aria-label="Toggle navigation" aria-expanded={navExpanded} aria-controls="calendar-drawer"><Ic n="menu" /></button>
-          <div className="logo"><span className="logo-d">{today.getDate()}</span></div>
-          <Seg className="pg" value={page} onChange={(v) => { setFocusCh(null); setPage(v); }} options={[["cal", "Calendar"], ["goals", "Goals"]]} />
+          <div className="logo"><img src="/calendar-mark.svg" alt="" /></div>
+          <Seg className="pg" value={page} onChange={(v) => { setFocusCh(null); setPage(v); }} options={[["cal", "Calendar"], ["tasks", "Tasks"], ["goals", "Goals"]]} />
           {!special && (
             <>
-              <button className="btn today-nav" onClick={() => setCur(new Date())}>Today</button>
-              <div className="navp calendar-nav">
-                <button className="ib" onClick={() => nav(-1)} aria-label="Previous"><Ic n="left" /></button>
-                <button className="ib" onClick={() => nav(1)} aria-label="Next"><Ic n="right" /></button>
+              <div className="calendar-controls">
+                <button className="btn today-nav" onClick={() => setCur(new Date())} aria-label="Go to today" title="Go to today"><Ic n="calendar" s={16} /><span className="today-label">Today</span></button>
+                <div className="navp calendar-nav">
+                  <button className="ib" onClick={() => nav(-1)} aria-label="Previous"><Ic n="left" /></button>
+                  <button className="ib" onClick={() => nav(1)} aria-label="Next"><Ic n="right" /></button>
+                </div>
               </div>
             </>
           )}
-          {fc && <button className="btn back-nav" onClick={() => setFocusCh(null)}><Ic n="left" s={15} />Back</button>}
+          {(fc || page !== "cal") && <button className="btn back-nav" onClick={backOneStep}><Ic n="left" s={15} />Back</button>}
           {titleEl}
           {!special && chips}
           <div className="sp" />
           <button className="spill mobile-search" onClick={() => setPal(true)} aria-label="Search or quick add"><Ic n="search" s={16} /><span>Search or quick add</span><kbd>Ctrl K</kbd></button>
-          {page !== "goals" && <button className={"ib panel-toggle" + (panel ? " live" : "")} onClick={() => setPanel(!panel)} aria-label="Toggle side panel" aria-pressed={panel} title="Side panel"><Ic n="panel" /></button>}
+          {page === "cal" && <button className={"ib panel-toggle" + (panel ? " live" : "")} onClick={() => setPanel(!panel)} aria-label="Toggle side panel" aria-pressed={panel} title="Side panel"><Ic n="panel" /></button>}
           {!special && <div className="rel view-picker">
-            <button className="btn vb" onClick={() => setMenu(!menu)}>{VIEWS.find((v) => v[0] === view)[1]} <Ic n="down" s={16} /></button>
+            <button className="btn vb" onClick={() => setMenu(!menu)} aria-expanded={menu} aria-haspopup="menu"><span className="vb-label">View</span><b>{VIEWS.find((v) => v[0] === view)[1]}</b><Ic n="down" s={16} /></button>
             {menu && (
               <>
                 <div className="clickaway" onMouseDown={() => setMenu(false)} />
-                <div className="menu">
-                  {VIEWS.map(([k, n, sc]) => <button key={k} className={view === k ? "cur" : ""} onClick={() => { showView(k); setMenu(false); }}>{n}<kbd>{sc}</kbd></button>)}
+                <div className="menu view-menu" role="menu" aria-label="Choose calendar view">
+                  <div className="view-menu-heading"><b>Choose a view</b><small>Find the right amount of detail</small></div>
+                  {VIEWS.map(([k, n, sc]) => <button key={k} role="menuitemradio" aria-checked={view === k} className={view === k ? "cur" : ""} onClick={() => { showView(k); setMenu(false); }}><span className="view-menu-copy"><b>{n}</b><small>{VIEW_HINTS[k]}</small></span><kbd>{sc}</kbd></button>)}
                 </div>
               </>
             )}
           </div>}
           <button className="ib focus-toggle" onClick={() => setFocus(true)} aria-label="Focus mode" title="Focus mode (F)"><Ic n="focus" /></button>
-          {page !== "goals" && <button className={"ib quote-toggle" + (daily && panel ? " live" : "")} onClick={() => { if (!panel) { setPanel(true); setDaily(true); } else setDaily(!daily); }} aria-label="Daily quote" aria-pressed={daily && panel} title="Daily quote & verse"><Ic n="quote" /></button>}
+          {page === "cal" && <button className={"ib quote-toggle" + (daily && panel ? " live" : "")} onClick={() => { if (!panel) { setPanel(true); setDaily(true); } else setDaily(!daily); }} aria-label="Daily quote" aria-pressed={daily && panel} title="Daily quote & verse"><Ic n="quote" /></button>}
           <button className="ib theme-toggle" onClick={() => setDark(!dark)} aria-label="Toggle theme" title="Dark / light"><Ic n={dark ? "sun" : "moon"} /></button>
           <CloudAccount email={user.email} syncStatus={syncStatus} onSignOut={onSignOut} />
         </header>
@@ -652,6 +867,7 @@ function CalendarApp({ user, onSignOut, authError }) {
           }}
         >
           {fc ? <ChallengeView key={fc.id} c={fc} toggleCheck={toggleCheck} setNote={setNote} onEdit={() => editChallenge(fc)} onRestart={() => setModal({ type: "challenge", data: { title: fc.title, start: dk(today), days: fc.days, note: fc.note, checks: [] } })} />
+            : page === "tasks" ? <TasksPage items={items} toggleItem={toggleItem} setModal={setModal} openRange={openRange} holidays={holidayEvents} holidayCountry={holidayCountry} setHolidayCountry={setHolidayCountry} holidayError={holidayError} notificationPermission={notificationPermission} reminderNotice={reminderNotice} enableReminders={enableReminders} />
             : page === "goals" ? <GoalsPage goals={goals} items={items} challenges={challenges} toggleGoal={toggleGoal} deleteGoal={deleteGoal} editGoal={editGoal} toggleItem={toggleItem} setModal={setModal} openChallenge={openChallenge} newGoal={newGoal} newChallenge={newChallenge} openRange={openRange} go={go} toggleCheck={toggleCheck} />
             : <>
           {(view === "day" || view === "week") && <TimeGrid {...ctx} days={view === "day" ? [cur] : Array.from({ length: 7 }, (_, i) => addDays(startOfWeek(cur), i))} />}
@@ -661,9 +877,14 @@ function CalendarApp({ user, onSignOut, authError }) {
           {view === "life" && <LifeView />}
           </>}
         </main>
-        {panel && !focus && page !== "goals" && <GoalsPanel {...ctx} daily={daily} />}
+        {panel && !focus && page === "cal" && <GoalsPanel {...ctx} daily={daily} />}
       </div>
 
+      {!focus && <nav className="mobile-tabs" aria-label="Main navigation">
+        <button className={page === "cal" && !fc ? "active" : ""} onClick={() => { setFocusCh(null); setPage("cal"); }} aria-current={page === "cal" && !fc ? "page" : undefined}><Ic n="calendar" s={20} /><span>Calendar</span></button>
+        <button className={page === "tasks" ? "active" : ""} onClick={openTasks} aria-current={page === "tasks" ? "page" : undefined}><Ic n="check" s={20} /><span>Tasks</span></button>
+        <button className={page === "goals" || !!fc ? "active" : ""} onClick={openGoals} aria-current={page === "goals" || !!fc ? "page" : undefined}><Ic n="target" s={20} /><span>Goals</span></button>
+      </nav>}
       {!focus && !fc && page === "cal" && view === "month" && (
         <button className="mobile-fab" onClick={() => newEvent(cur)} aria-label="Create event" title="Create event">
           <Ic n="plus" s={24} />
@@ -680,7 +901,7 @@ function CalendarApp({ user, onSignOut, authError }) {
             : <span className="agechip">{VIEWS.find((v) => v[0] === view)[1]}</span>}
         </div>
       )}
-      {modal?.type === "event" && <EventModal data={modal.data} calendars={calendars} calendarColor={calendarColor} close={() => setModal(null)} save={saveEvent} del={(id) => remove("event", id)} />}
+      {modal?.type === "event" && <EventModal data={modal.data} calendars={calendars} calendarColor={calendarColor} close={() => setModal(null)} save={saveEvent} del={(id) => remove("event", id)} notificationPermission={notificationPermission} />}
       {modal?.type === "calendar" && <CalendarModal data={modal.data} close={() => setModal(null)} save={saveCalendar} del={deleteCalendar} />}
       {toast && <div className="toast"><span>{toast.msg}</span>{toast.undo && <button onClick={() => { toast.undo(); setToast(null); }}>Undo</button>}</div>}
       {pal && <Palette close={() => setPal(false)} go={go} setView={showView} setCur={(d) => { setFocusCh(null); setPage("cal"); setCur(d); }} openGoals={openGoals} openChallenge={openChallenge} events={events} goals={goals} items={items} challenges={challenges} newChallenge={() => newChallenge()} setAccent={setAccent} exportData={exportData} importClick={() => fileRef.current?.click()} toggleDark={() => setDark(!dark)} addEvent={(ev) => setEvents((p) => [...p, { ...ev, id: Date.now() }])} />}
@@ -1312,6 +1533,121 @@ function GoalsPanel({ fcId, openGoals, cur, daily, goals, carry, goalsFor, newGo
   );
 }
 
+function TasksPage({ items, toggleItem, setModal, openRange, holidays, holidayCountry, setHolidayCountry, holidayError, notificationPermission, reminderNotice, enableReminders, go }) {
+  const [status, setStatus] = useState("active");
+  const [query, setQuery] = useState("");
+  const todayKey = dk(today);
+  const tasks = items.filter((item) => item.kind === "task");
+  const done = tasks.filter((item) => item.done).length;
+  const overdue = tasks.filter(late).length;
+  const active = tasks.length - done;
+  const filtered = tasks
+    .filter((item) => status === "all" || (status === "done" ? item.done : !item.done))
+    .filter((item) => item.title.toLowerCase().includes(query.trim().toLowerCase()))
+    .sort((a, b) => Number(a.done) - Number(b.done) || a.start.localeCompare(b.start));
+  const upcomingHolidays = holidays
+    .filter((holiday) => holiday.date >= todayKey)
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .slice(0, 5);
+  const permissionLabel = {
+    granted: "Notifications enabled",
+    denied: "Blocked in browser settings",
+    default: "Enable phone reminders",
+    unsupported: "Notifications not supported",
+  }[notificationPermission] || "Enable phone reminders";
+
+  return (
+    <div className="task-page">
+      <header className="task-heading">
+        <div>
+          <span className="eyebrow">A little progress adds up</span>
+          <h2>Your tasks</h2>
+          <p>Keep the next step clear. You can change dates or mark things done as you go.</p>
+        </div>
+        <button className="btn fill task-add" onClick={() => openRange(todayKey, todayKey, "task")}><Ic n="plus" s={16} />New task</button>
+      </header>
+
+      <section className="task-summary" aria-label="Task progress">
+        <div className="task-progress">
+          <span className="task-progress-ring" style={{ "--progress": `${tasks.length ? (done / tasks.length) * 100 : 0}%` }}><b>{tasks.length ? Math.round((done / tasks.length) * 100) : 0}%</b></span>
+          <span><b>Your pace</b><small>{done} of {tasks.length} tasks complete</small></span>
+        </div>
+        <div className="task-stat"><b>{active}</b><small>to do</small></div>
+        <div className="task-stat"><b>{tasks.filter((item) => !item.done && item.start <= todayKey && item.end >= todayKey).length}</b><small>today</small></div>
+        <div className={"task-stat" + (overdue ? " overdue" : "")}><b>{overdue}</b><small>overdue</small></div>
+      </section>
+
+      <div className="task-layout">
+        <section className="task-list-card">
+          <div className="task-list-heading">
+            <div><h3>Task list</h3><span>{filtered.length} {filtered.length === 1 ? "task" : "tasks"}</span></div>
+            <Seg value={status} onChange={setStatus} options={[["active", "To do"], ["done", "Done"], ["all", "All"]]} />
+          </div>
+          <label className="task-search"><Ic n="search" s={17} /><input type="search" placeholder="Find a task" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+          {filtered.length ? (
+            <div className="task-list">
+              {filtered.map((item) => (
+                <article key={item.id} className={"task-row" + (item.done ? " done" : "") + (late(item) ? " late" : "")}>
+                  <input type="checkbox" checked={item.done} onChange={() => toggleItem(item.id)} aria-label={`${item.done ? "Reopen" : "Complete"} ${item.title}`} />
+                  <button className="task-row-main" onClick={() => setModal({ type: "range", data: item })}>
+                    <b>{item.title}</b>
+                    <small>{fmtK(item.start)}{item.end !== item.start ? ` – ${fmtK(item.end)}` : ""}{late(item) ? " · overdue" : ""}</small>
+                  </button>
+                  <button className="ib sm" onClick={() => go("day", parse(item.start))} aria-label={`Show ${item.title} on calendar`}><Ic n="ext" s={15} /></button>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="task-empty">
+              <span className="task-empty-icon"><Ic n="check" s={22} /></span>
+              <b>{query ? "No matching tasks" : status === "done" ? "Nothing completed yet" : "A clear slate"}</b>
+              <p>{query ? "Try another search." : "Add a task when something needs a date and a little space on your calendar."}</p>
+              {!query && <button className="link" onClick={() => openRange(todayKey, todayKey, "task")}><Ic n="plus" s={14} />Add your first task</button>}
+            </div>
+          )}
+        </section>
+
+        <aside className="task-side">
+          <section className="task-side-card holiday-card">
+            <div className="task-side-title">
+              <span className="holiday-mark" aria-hidden="true">✦</span>
+              <div><h3>Public holidays</h3><small>Public days and observances</small></div>
+            </div>
+            <label className="holiday-country">
+              <span>Country</span>
+              <select value={holidayCountry} onChange={(event) => setHolidayCountry(event.target.value)} aria-label="Public holiday country">
+                {HOLIDAY_COUNTRIES.map(([code, name]) => <option key={code} value={code}>{name}</option>)}
+              </select>
+            </label>
+            {holidayError ? <p className="holiday-error" role="status">Could not load holidays: {holidayError}</p> : upcomingHolidays.length ? (
+              <div className="holiday-list">
+                {upcomingHolidays.map((holiday) => (
+                  <button key={holiday.id} className="holiday-row" onClick={() => go("day", parse(holiday.date))}>
+                    <span className="holiday-date"><b>{parse(holiday.date).getDate()}</b><small>{MONTHS[parse(holiday.date).getMonth()].slice(0, 3)}</small></span>
+                    <span><b>{holiday.title}</b><small>{parse(holiday.date).toLocaleDateString(undefined, { weekday: "long" })}</small></span>
+                    <Ic n="right" s={15} />
+                  </button>
+                ))}
+              </div>
+            ) : <p className="holiday-empty">No upcoming public holidays found for this year.</p>}
+            <p className="holiday-foot">Shown on your calendar too. Regional observances vary, and some religious dates may shift.</p>
+          </section>
+
+          <section className="task-side-card reminder-card">
+            <span className="reminder-icon"><Ic n="quote" s={18} /></span>
+            <div><h3>Never miss a moment</h3><p>Choose a reminder when you create an event, then allow notifications on your phone.</p></div>
+            <button className="btn reminder-enable" onClick={enableReminders} disabled={notificationPermission === "unsupported" || notificationPermission === "denied"}>
+              {permissionLabel}
+            </button>
+            {reminderNotice && <small className="reminder-note" role="status">{reminderNotice}</small>}
+            {notificationPermission === "granted" && <small className="reminder-note">Reminders are delivered while this calendar is open. Closed-app delivery needs push service setup.</small>}
+          </section>
+        </aside>
+      </div>
+    </div>
+  );
+}
+
 /* ---------- isolated challenge view ---------- */
 function ChallengeView({ c, toggleCheck, setNote, onEdit, onRestart }) {
   const s = cStats(c), t = dk(today), end = cEnd(c), set = new Set(c.checks);
@@ -1560,9 +1896,21 @@ function CalendarModal({ data, close, save, del }) {
   );
 }
 
-function EventModal({ data, calendars, calendarColor, close, save, del }) {
+function EventModal({ data, calendars, calendarColor, close, save, del, notificationPermission }) {
   const [f, setF] = useState(data);
   const set = (k, v) => setF({ ...f, [k]: v });
+  if (f.holiday) {
+    return (
+      <Modal title="Public holiday" close={close}>
+        <div className="holiday-detail">
+          <span className="holiday-mark" aria-hidden="true">✦</span>
+          <div><h2>{f.title}</h2><p>{fmtK(f.date)}</p>{f.desc && <small>{f.desc}</small>}</div>
+        </div>
+        <p className="holiday-foot">This date comes from the selected public-holiday calendar.</p>
+        <div className="act"><div className="sp" /><button className="btn fill" onClick={close}>Done</button></div>
+      </Modal>
+    );
+  }
   return (
     <Modal title={f.id ? "Edit event" : "New event"} close={close}>
       <input className="ti" autoFocus placeholder="Add title" value={f.title} onChange={(e) => set("title", e.target.value)} />
@@ -1574,6 +1922,19 @@ function EventModal({ data, calendars, calendarColor, close, save, del }) {
         <select value={f.cal} onChange={(e) => set("cal", e.target.value)}>{calendars.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
         <i className="dot" style={{ background: calendarColor(f.cal) }} />
       </div>
+      {!f.allDay && <label className="event-reminder">
+        <span>Reminder</span>
+        <select value={f.reminderMinutes ?? ""} onChange={(e) => set("reminderMinutes", e.target.value === "" ? null : Number(e.target.value))}>
+          <option value="">No reminder</option>
+          <option value="0">At event time</option>
+          <option value="5">5 minutes before</option>
+          <option value="10">10 minutes before</option>
+          <option value="15">15 minutes before</option>
+          <option value="30">30 minutes before</option>
+          <option value="60">1 hour before</option>
+        </select>
+        {f.reminderMinutes != null && notificationPermission !== "granted" && <small>Allow phone notifications from Tasks to receive this reminder.</small>}
+      </label>}
       <textarea placeholder="Add description" value={f.desc} onChange={(e) => set("desc", e.target.value)} />
       <div className="act">
         {f.id && <button className="btn red" onClick={() => { del(f.id); close(); }}>Delete</button>}
@@ -2181,4 +2542,164 @@ button.gtt:hover{color:var(--ac2)}
 .cloud-alert button{flex-shrink:0;border:1px solid #a85863;border-radius:6px;padding:4px 8px;background:transparent;color:inherit;font:inherit;cursor:pointer}
 @media(max-width:1100px){.cloud-email{display:none}}
 @media(max-width:760px){.cloud-sync{display:none}.cloud-account{gap:4px;padding-left:5px}.cloud-signout{padding:0 6px}}
+
+/* ============ tasks, holidays & mobile navigation ============ */
+.mobile-tabs{display:none}
+.task-page{max-width:1120px;margin:0 auto;padding:30px clamp(16px,3vw,38px) 48px}
+.task-heading{display:flex;align-items:center;justify-content:space-between;gap:18px;margin:0 0 22px}
+.task-heading h2{margin:4px 0 6px;font-size:30px;font-weight:650;letter-spacing:-.04em}
+.task-heading p{max-width:54ch;color:var(--mute);font-size:13px}
+.eyebrow{color:var(--ac2);font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+.task-add{height:40px;padding:0 16px;border-radius:12px}
+.task-summary{display:flex;align-items:center;gap:26px;padding:18px 22px;margin-bottom:16px;border:1px solid var(--line);border-radius:18px;background:var(--tile);box-shadow:var(--sh1)}
+.task-progress{display:flex;align-items:center;gap:12px;min-width:220px}
+.task-progress>span:last-child{display:flex;flex-direction:column;gap:2px}
+.task-progress>span:last-child b{font-size:13px}.task-progress small,.task-stat small{color:var(--mute);font-size:11.5px}
+.task-progress-ring{--progress:0%;display:grid;place-items:center;width:44px;height:44px;border-radius:50%;background:conic-gradient(var(--ac) var(--progress),var(--track) 0);position:relative}
+.task-progress-ring::before{content:"";position:absolute;inset:4px;border-radius:50%;background:var(--bg)}
+.task-progress-ring b{position:relative;font-size:10px;font-weight:700;font-variant-numeric:tabular-nums}
+.task-stat{display:flex;flex-direction:column;gap:1px;min-width:58px}.task-stat b{font-size:19px;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.task-stat.overdue b,.task-stat.overdue small{color:var(--rfg)}
+.task-layout{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(280px,.8fr);gap:16px;align-items:start}
+.task-list-card,.task-side-card{border:1px solid var(--line);border-radius:18px;background:var(--tile);box-shadow:var(--sh1)}
+.task-list-card{padding:12px}
+.task-list-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:4px 4px 12px}
+.task-list-heading>div{display:flex;align-items:baseline;gap:8px}.task-list-heading h3,.task-side-card h3{margin:0;font-size:14px;font-weight:650}
+.task-list-heading>div>span{font-size:11px;color:var(--mute)}
+.task-list-heading .iseg button{padding:5px 10px;font-size:11px}
+.task-search{display:flex;align-items:center;gap:9px;height:40px;padding:0 12px;margin:0 0 8px;border:1px solid var(--line);border-radius:11px;background:var(--bg);color:var(--faint)}
+.task-search:focus-within{border-color:var(--ac);box-shadow:0 0 0 3px color-mix(in srgb,var(--ac) 18%,transparent)}
+.task-search input{width:100%;height:100%;border:0;outline:0;background:transparent;color:var(--fg);font:inherit}
+.task-search input:focus{box-shadow:none}
+.task-list{display:flex;flex-direction:column}
+.task-row{display:flex;align-items:center;gap:12px;min-height:62px;padding:8px 8px;border-bottom:1px solid var(--line);border-radius:10px}
+.task-row:last-child{border-bottom:0}.task-row:hover{background:var(--hover)}
+.task-row-main{display:flex;flex:1;min-width:0;flex-direction:column;gap:3px;text-align:left}
+.task-row-main b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:550}
+.task-row-main small{color:var(--mute);font-size:11px}
+.task-row.late .task-row-main small{color:var(--rfg);font-weight:600}
+.task-row.done .task-row-main b{text-decoration:line-through;opacity:.62}
+.task-empty{display:flex;align-items:center;flex-direction:column;text-align:center;padding:32px 18px 36px}
+.task-empty-icon{display:grid;place-items:center;width:42px;height:42px;margin-bottom:10px;border-radius:14px;background:var(--ab);color:var(--ac2)}
+.task-empty>b{font-size:13px}.task-empty p{max-width:36ch;margin:5px 0 10px;color:var(--mute);font-size:12px}
+.task-side{display:flex;flex-direction:column;gap:14px}
+.task-side-card{padding:16px}
+.task-side-title{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.task-side-title>div{display:flex;flex-direction:column;gap:2px}.task-side-title small{color:var(--mute);font-size:11px}
+.holiday-mark{display:grid;place-items:center;width:34px;height:34px;border-radius:12px;background:var(--gbg);color:var(--gfg);font-size:18px}
+.holiday-country{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;color:var(--mute);font-size:11px;font-weight:600}
+.holiday-country select{height:32px;max-width:62%;font-size:11px}
+.holiday-list{display:flex;flex-direction:column}
+.holiday-row{display:flex;align-items:center;gap:10px;width:100%;padding:8px 2px;border-top:1px solid var(--line);text-align:left;border-radius:8px}
+.holiday-row:hover{background:var(--hover)}
+.holiday-row>span:nth-child(2){display:flex;flex-direction:column;gap:2px;flex:1;min-width:0}
+.holiday-row>span:nth-child(2)>b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px;font-weight:600}
+.holiday-row>span:nth-child(2)>small{color:var(--mute);font-size:10.5px}
+.holiday-row>svg{color:var(--faint)}
+.holiday-date{display:flex;flex-direction:column;align-items:center;justify-content:center;flex-shrink:0;width:38px;height:40px;border-radius:10px;background:var(--ab);color:var(--ac2)}
+.holiday-date b{font-size:15px;line-height:1}.holiday-date small{font-size:9px;font-weight:700;text-transform:uppercase}
+.holiday-foot,.holiday-empty,.holiday-error{margin:10px 0 0;color:var(--mute);font-size:10.5px;line-height:1.55}
+.holiday-error{color:var(--rfg)}
+.reminder-card{display:grid;grid-template-columns:34px minmax(0,1fr);gap:10px}
+.reminder-icon{display:grid;place-items:center;width:34px;height:34px;border-radius:12px;background:var(--ab);color:var(--ac2)}
+.reminder-card h3{margin:1px 0 4px}.reminder-card p{color:var(--mute);font-size:11px;line-height:1.55}
+.reminder-enable{grid-column:1/-1;width:100%;height:38px;border-radius:11px}
+.reminder-enable:disabled{opacity:.62;cursor:not-allowed}
+.reminder-note{grid-column:1/-1;color:var(--mute);font-size:10.5px;line-height:1.5}
+.event-reminder{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px;color:var(--mute);font-size:12px}
+.event-reminder>span{font-weight:600}.event-reminder select{flex:1;min-width:160px}
+.event-reminder small{flex:1 0 100%;font-size:10.5px}
+.holiday-detail{display:flex;align-items:flex-start;gap:12px;padding:10px 0}
+.holiday-detail .holiday-mark{flex-shrink:0}.holiday-detail h2{margin:0 0 4px;font-size:18px;line-height:1.25;overflow-wrap:anywhere}
+.holiday-detail p,.holiday-detail small{color:var(--mute)}
+.md-box{max-height:min(90dvh,760px);overflow-y:auto}
+.logo img{display:block;width:32px;height:32px;border-radius:10px}
+.title-mark{display:none}
+.calendar-controls{display:flex;align-items:center;gap:3px}
+.view-picker .vb{min-width:116px}
+.view-picker .vb-label{display:none}
+.view-menu-heading{display:none}
+.view-menu-copy{display:contents}
+@media(max-width:900px){.task-layout{grid-template-columns:minmax(0,1fr) minmax(260px,.78fr)}.task-summary{gap:18px}}
+@media(max-width:800px){
+  .mobile-tabs{position:fixed;z-index:35;inset:auto 0 0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));padding:7px 10px calc(7px + env(safe-area-inset-bottom));border-top:1px solid var(--line);background:color-mix(in srgb,var(--bg) 94%,transparent);backdrop-filter:blur(16px)}
+  .top:not(.focus-top)>.pg{display:none}
+  .mobile-tabs button{display:flex;align-items:center;justify-content:center;flex-direction:column;gap:3px;min-height:48px;border-radius:12px;color:var(--mute);font-size:10px;font-weight:600}
+  .mobile-tabs button.active{background:var(--ab);color:var(--ac2)}
+  .mobile-tabs button:active{transform:scale(.97)}
+  .body{padding-bottom:calc(76px + env(safe-area-inset-bottom))}
+  .task-layout{grid-template-columns:minmax(0,1fr)}
+  .task-side{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}
+  .task-page{padding:24px 20px 36px}
+}
+@media(max-width:600px){
+  .gc{height:100dvh;min-height:100svh}
+  .top:not(.focus-top){display:grid;grid-template-columns:38px minmax(0,1fr) auto;grid-template-rows:42px 42px;gap:6px 9px;padding:calc(9px + env(safe-area-inset-top)) 14px 10px;min-height:calc(103px + env(safe-area-inset-top))}
+  .top:not(.focus-top)>.sidebar-toggle{grid-column:1;grid-row:1;width:38px;height:38px}
+  .top:not(.focus-top)>.logo{display:none}
+  .top:not(.focus-top)>.pg{display:none}
+  .top:not(.focus-top)>.calendar-title{grid-column:2;grid-row:1;display:flex;align-items:center;gap:8px;min-width:0;margin:0;font-size:17px;line-height:1.15}
+  .title-mark{display:block;width:24px;height:24px;flex-shrink:0;border-radius:8px}
+  .top:not(.focus-top)>.calendar-controls{grid-column:3;grid-row:1;display:flex;align-items:center;gap:3px}
+  .calendar-controls .today-nav{height:36px;padding:0 10px;border-radius:11px;font-size:11px}
+  .calendar-controls .today-nav{width:36px;padding:0}
+  .today-label{display:none}
+  .calendar-controls .calendar-nav{gap:0}
+  .calendar-controls .calendar-nav .ib{width:34px;height:36px;border-radius:10px}
+  .top:not(.focus-top)>.back-nav{grid-column:1;grid-row:2;justify-self:start;height:38px;padding:0 11px;border-radius:11px}
+  .top:not(.focus-top)>.agechip{display:none}
+  .top:not(.focus-top)>.sp{display:none}
+  .top:not(.focus-top)>.mobile-search{display:none}
+  .top:not(.focus-top)>.view-picker{grid-column:1 / 3;grid-row:2;justify-self:stretch;width:100%}
+  .top:not(.focus-top)>.view-picker .vb{display:flex;justify-content:space-between;width:100%;height:40px;padding:0 13px;border-radius:12px;font-size:12px}
+  .vb-label{color:var(--mute);font-weight:500}
+  .top:not(.focus-top)>.focus-toggle,.top:not(.focus-top)>.theme-toggle{display:none}
+  .top:not(.focus-top)>.cloud-account{grid-column:3;grid-row:2;justify-self:end;margin:0;padding:0;border:0}
+  .top:not(.focus-top) .cloud-sync,.top:not(.focus-top) .cloud-email{display:none}
+  .top:not(.focus-top)>.panel-toggle,.top:not(.focus-top)>.quote-toggle{display:none}
+  .menu.view-menu{position:fixed;z-index:60;inset:auto 12px calc(72px + env(safe-area-inset-bottom));display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;width:auto;max-height:min(68dvh,560px);overflow-y:auto;padding:12px;border-radius:20px;transform:none;transform-origin:bottom center;animation:zoom .18s cubic-bezier(.2,.9,.3,1)}
+  .view-menu-heading{display:flex;grid-column:1/-1;flex-direction:column;gap:2px;padding:5px 7px 10px}
+  .view-menu-heading>b{font-size:14px;font-weight:650;letter-spacing:-.02em}
+  .view-menu-heading>small{color:var(--mute);font-size:11px}
+  .view-menu button{min-height:58px;gap:8px;padding:8px 10px;border:1px solid var(--line);border-radius:12px;background:var(--bg)}
+  .view-menu button.cur{border-color:var(--ab3);background:var(--ab)}
+  .view-menu-copy{display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-width:0}
+  .view-menu-copy>b{font-size:11.5px;font-weight:650}
+  .view-menu-copy>small{overflow:hidden;max-width:100%;color:var(--mute);font-size:9px;font-weight:400;text-overflow:ellipsis;white-space:nowrap}
+  .view-menu button.cur .view-menu-copy>small{color:var(--ac2)}
+  .view-menu kbd{flex-shrink:0}
+  .body{gap:0;padding:0 10px calc(76px + env(safe-area-inset-bottom))}
+  .main{border-radius:18px}
+  .mobile-fab{right:18px;bottom:calc(84px + env(safe-area-inset-bottom));width:54px;height:54px;border-radius:17px}
+  .task-page{padding:22px 14px 28px}
+  .task-heading{align-items:flex-start;margin-bottom:16px}
+  .task-heading h2{font-size:26px}
+  .task-heading p{font-size:12px;line-height:1.55}
+  .task-add{width:42px;height:42px;padding:0;font-size:0;flex-shrink:0}
+  .task-add svg{width:20px;height:20px}
+  .task-summary{display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:14px;margin-bottom:12px;border-radius:16px}
+  .task-progress{grid-column:1/-1;min-width:0;padding-bottom:12px;border-bottom:1px solid var(--line)}
+  .task-stat{padding-left:4px}
+  .task-list-card,.task-side-card{border-radius:16px}
+  .task-list-card{padding:10px}
+  .task-list-heading{align-items:flex-start;flex-direction:column;padding:4px 2px 10px}
+  .task-list-heading .iseg{width:100%}
+  .task-list-heading .iseg button{min-height:34px}
+  .task-row{min-height:64px;gap:9px;padding-inline:5px}
+  .task-side{grid-template-columns:minmax(0,1fr);gap:10px}
+  .task-side-card{padding:14px}
+  .gpg{padding:18px 14px 32px}
+  .gpgh{align-items:stretch}
+  .gpgh h2{width:100%;font-size:26px}
+  .gpgh .gsearch{width:100%;height:40px}
+  .gpgh>.sp{display:none}
+  .gpgh>.iseg{width:100%}
+  .gpgh>.iseg button{min-height:36px}
+  .gpgh>.btn{flex:1;min-height:40px}
+  .md-box{width:min(460px,calc(100vw - 24px));padding:14px 16px 16px;border-radius:18px}
+  .fr{flex-wrap:wrap}
+  .fr input[type=date]{flex:1;min-width:130px}
+  .event-reminder select{min-width:0;width:100%}
+}
+@media(prefers-reduced-motion:reduce){.mobile-tabs button:active{transform:none}}
 `;

@@ -37,7 +37,7 @@ export default function AuthScreen({ connectionError }) {
   return (
     <main className="auth-page">
       <form className="auth-card" onSubmit={submit}>
-        <div className="auth-mark" aria-hidden="true">1</div>
+        <img className="auth-mark" src="/calendar-mark.svg" alt="" />
         <h1>{mode === "sign-in" ? "Welcome back" : "Create your account"}</h1>
         <p>Your calendar is private to your account and syncs across devices.</p>
         {connectionError && <div className="auth-error" role="alert">{connectionError}</div>}
